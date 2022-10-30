@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 )
+
+var ipAddrs = make(map[string]uint64)
 
 const (
 	// The same default as tcpdump.
@@ -18,11 +21,58 @@ const (
 )
 
 func analyse_packet(pkt gopacket.Packet) {
-	log.Println("Handling pkt %s", pkt)
+	ethernetLayer := pkt.Layer(layers.LayerTypeEthernet)
+	if ethernetLayer != nil {
+		fmt.Println("Ethernet layer detected.")
+		ethernetPacket, _ := ethernetLayer.(*layers.Ethernet)
+		fmt.Println("Source MAC: ", ethernetPacket.SrcMAC)
+		fmt.Println("Destination MAC: ", ethernetPacket.DstMAC)
+		// Ethernet type is typically IPv4 but could be ARP or other
+		fmt.Println("Ethernet type: ", ethernetPacket.EthernetType)
+		fmt.Println()
+	}
+
+	// Let's see if the packet is IP (even though the ether type told us)
+	ipLayer := pkt.Layer(layers.LayerTypeIPv4)
+	if ipLayer != nil {
+		fmt.Println("IPv4 layer detected.")
+		ip, _ := ipLayer.(*layers.IPv4)
+		scrIp := ip.SrcIP.String()
+
+		// IP layer variables:
+		// Version (Either 4 or 6)
+		// IHL (IP Header Length in 32-bit words)
+		// TOS, Length, Id, Flags, FragOffset, TTL, Protocol (TCP?),
+		// Checksum, SrcIP, DstIP
+		fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
+		fmt.Println("Protocol: ", ip.Protocol)
+		fmt.Println()
+
+		ipAddrs[scrIp] = ipAddrs[scrIp] + 1
+	}
+
+	ip6Layer := pkt.Layer(layers.LayerTypeIPv6)
+	if ip6Layer != nil {
+		fmt.Println("IPv6 layer detected.")
+		ip, _ := ip6Layer.(*layers.IPv6)
+		scrIp := ip.SrcIP.String()
+
+		// IP layer variables:
+		// Version (Either 4 or 6)
+		// IHL (IP Header Length in 32-bit words)
+		// TOS, Length, Id, Flags, FragOffset, TTL, Protocol (TCP?),
+		// Checksum, SrcIP, DstIP
+		fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
+		fmt.Println()
+
+		ipAddrs[scrIp] = ipAddrs[scrIp] + 1
+	}
 }
 
 func sniff(intf string, bpffiler string, duration time.Duration) {
-	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, duration)
+	//handle, err := pcap.OpenLive(intf, defaultSnapLen, true, pcap.BlockForever)
+	//handle, err := pcap.OpenLive(intf, defaultSnapLen, true, duration)
+	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, 1000)
 	if err != nil {
 		panic(err)
 	}
@@ -79,5 +129,6 @@ func main() {
 
 	sniff(*interfacePtr, bpffiler, duration)
 
+	fmt.Println("ipAddrs: ", ipAddrs)
 	fmt.Println("Sniffing done! Exit")
 }
