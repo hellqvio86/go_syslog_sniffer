@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
@@ -21,21 +22,10 @@ const (
 )
 
 func analyse_packet(pkt gopacket.Packet) {
-	ethernetLayer := pkt.Layer(layers.LayerTypeEthernet)
-	if ethernetLayer != nil {
-		fmt.Println("Ethernet layer detected.")
-		ethernetPacket, _ := ethernetLayer.(*layers.Ethernet)
-		fmt.Println("Source MAC: ", ethernetPacket.SrcMAC)
-		fmt.Println("Destination MAC: ", ethernetPacket.DstMAC)
-		// Ethernet type is typically IPv4 but could be ARP or other
-		fmt.Println("Ethernet type: ", ethernetPacket.EthernetType)
-		fmt.Println()
-	}
-
 	// Let's see if the packet is IP (even though the ether type told us)
 	ipLayer := pkt.Layer(layers.LayerTypeIPv4)
 	if ipLayer != nil {
-		fmt.Println("IPv4 layer detected.")
+		//fmt.Println("IPv4 layer detected.")
 		ip, _ := ipLayer.(*layers.IPv4)
 		scrIp := ip.SrcIP.String()
 
@@ -44,16 +34,16 @@ func analyse_packet(pkt gopacket.Packet) {
 		// IHL (IP Header Length in 32-bit words)
 		// TOS, Length, Id, Flags, FragOffset, TTL, Protocol (TCP?),
 		// Checksum, SrcIP, DstIP
-		fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
-		fmt.Println("Protocol: ", ip.Protocol)
-		fmt.Println()
+		//fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
+		//fmt.Println("Protocol: ", ip.Protocol)
+		//fmt.Println()
 
 		ipAddrs[scrIp] = ipAddrs[scrIp] + 1
 	}
 
 	ip6Layer := pkt.Layer(layers.LayerTypeIPv6)
 	if ip6Layer != nil {
-		fmt.Println("IPv6 layer detected.")
+		//fmt.Println("IPv6 layer detected.")
 		ip, _ := ip6Layer.(*layers.IPv6)
 		scrIp := ip.SrcIP.String()
 
@@ -62,8 +52,8 @@ func analyse_packet(pkt gopacket.Packet) {
 		// IHL (IP Header Length in 32-bit words)
 		// TOS, Length, Id, Flags, FragOffset, TTL, Protocol (TCP?),
 		// Checksum, SrcIP, DstIP
-		fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
-		fmt.Println()
+		//fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
+		//fmt.Println()
 
 		ipAddrs[scrIp] = ipAddrs[scrIp] + 1
 	}
@@ -93,16 +83,13 @@ func sniff(intf string, bpffiler string, duration time.Duration) {
 			analyse_packet(pkt)
 		case <-timer.C:
 			// timed out waiting for 2s seconds
-			log.Println("Timeout occure!")
 			return
 		}
 	}
 }
 
 func main() {
-	//ipAddrs := make(map[string]uint64)
-
-	interfacePtr := flag.String("i", "", "Interface to listen on")
+	interfacePtr := flag.String("i", "eth0", "Interface to listen on")
 	portPtr := flag.Int("p", 514, "Port to listen for")
 	secondsPtr := flag.Int64("t", 60, "Number of seconds to listen on interface")
 	flag.Parse()
@@ -116,19 +103,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	//now := time.Now() // current local time
-	//startTimeSec := now.Unix()
-
-	fmt.Println("Interface:", *interfacePtr)
-	fmt.Println("BPFfilter:", bpffiler)
-
-	log.Printf("Will listen %d on interface %s", *secondsPtr, *interfacePtr)
-
-	log.Printf("Duration: %s", duration)
-	log.Println("Duration in seconds:", duration.Seconds())
-
 	sniff(*interfacePtr, bpffiler, duration)
 
-	fmt.Println("ipAddrs: ", ipAddrs)
-	fmt.Println("Sniffing done! Exit")
+	if len(ipAddrs) == 0 {
+		return
+	}
+
+	keys := make([]string, 0, len(ipAddrs))
+
+	for k := range ipAddrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Println("IP,count")
+	for _, key := range keys {
+		fmt.Print(key)
+		fmt.Print(",")
+		fmt.Print(ipAddrs[key])
+		fmt.Println("")
+	}
 }
