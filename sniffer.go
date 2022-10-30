@@ -21,6 +21,34 @@ func analyse_packet(pkt gopacket.Packet) {
 	log.Println("Handling pkt %s", pkt)
 }
 
+func sniff(intf string, bpffiler string, duration time.Duration) {
+	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, duration)
+	if err != nil {
+		panic(err)
+	}
+	defer handle.Close()
+
+	if err := handle.SetBPFFilter(bpffiler); err != nil {
+		panic(err)
+	}
+	//timer := time.NewTicker(2 * time.Second)
+	timer := time.NewTicker(duration)
+	defer timer.Stop()
+
+	src := gopacket.NewPacketSource(handle, handle.LinkType())
+	for {
+		select {
+		case pkt := <-src.Packets():
+			// process a packet in pkt
+			analyse_packet(pkt)
+		case <-timer.C:
+			// timed out waiting for 2s seconds
+			log.Println("Timeout occure!")
+			return
+		}
+	}
+}
+
 func main() {
 	//ipAddrs := make(map[string]uint64)
 
@@ -31,9 +59,6 @@ func main() {
 
 	bpffiler := "port " + strconv.Itoa(*portPtr)
 
-	now := time.Now() // current local time
-	startTimeSec := now.Unix()
-
 	duration := time.Duration(*secondsPtr * int64(time.Second))
 
 	if *interfacePtr == "" {
@@ -41,30 +66,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	//now := time.Now() // current local time
+	//startTimeSec := now.Unix()
+
 	fmt.Println("Interface:", *interfacePtr)
 	fmt.Println("BPFfilter:", bpffiler)
 
 	log.Printf("Will listen %d on interface %s", *secondsPtr, *interfacePtr)
 
-	log.Printf("Current time: %s will end: %s", startTimeSec, startTimeSec+*secondsPtr)
 	log.Printf("Duration: %s", duration)
+	log.Println("Duration in seconds:", duration.Seconds())
 
-	handle, err := pcap.OpenLive(*interfacePtr, defaultSnapLen, true, duration)
-	if err != nil {
-		panic(err)
-	}
-	defer handle.Close()
+	sniff(*interfacePtr, bpffiler, duration)
 
-	if err := handle.SetBPFFilter(bpffiler); err != nil {
-		panic(err)
-	}
-
-	packets := gopacket.NewPacketSource(
-		handle, handle.LinkType()).Packets()
-	for pkt := range packets {
-		// Your analysis here!
-		analyse_packet(pkt)
-	}
-
-	fmt.Printf("Stopped listening to interface. Exiting!")
+	fmt.Println("Sniffing done! Exit")
 }

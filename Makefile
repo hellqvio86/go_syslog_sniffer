@@ -1,5 +1,5 @@
 clean:
-	rm hello-world
+	rm sniffer
 build:
-	go build hello-world
+	go build sniffer
 .PHONY: build clean
