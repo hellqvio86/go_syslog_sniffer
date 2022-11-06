@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/gopacket"
@@ -148,6 +149,14 @@ func sniff(intf string, bpffiler string, duration time.Duration) {
 	}
 }
 
+func _UnescapeUnicodeCharactersInJSON(_jsonRaw json.RawMessage) (json.RawMessage, error) {
+	str, err := strconv.Unquote(strings.Replace(strconv.Quote(string(_jsonRaw)), `\\u`, `\u`, -1))
+	if err != nil {
+		return nil, err
+	}
+	return []byte(str), nil
+}
+
 func main() {
 	interfacePtr := flag.String("i", "eth0", "Interface to listen on")
 	portPtr := flag.Int("p", 514, "Port to listen for")
@@ -188,8 +197,9 @@ func main() {
 	if err != nil {
 		log.Println("Failed with json Mashal", err)
 	}
+	jsonRawUnescapedBytes, _ := _UnescapeUnicodeCharactersInJSON(jsonByte)
 
-	_ = ioutil.WriteFile("syslog_flow.json", jsonByte, 0644)
+	_ = ioutil.WriteFile("syslog_flow.json", jsonRawUnescapedBytes, 0644)
 
 	//fmt.Println("\n")
 	//look_for_invalid_timestamps(keys)
