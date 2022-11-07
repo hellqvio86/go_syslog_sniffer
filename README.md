@@ -26,8 +26,8 @@ make build
 ```
 
 ## Commandline arguments
-| Argument | Description                              |
-| -------- |:----------------------------------------:| 
-| -i       | Interface to listen on. Default eth0     | 
-| -p       | Port to listen for                       |   
-| -t       | Number of seconds to listen on interface | 
+| Argument | Description                              | Default |
+| -------- |:----------------------------------------:|:-------:|
+| -i       | Interface to listen on                   | eth0    |
+| -p       | Port to listen for                       | 514     | 
+| -t       | Number of seconds to listen on interface | 60      |
