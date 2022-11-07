@@ -1,4 +1,5 @@
 # go_syslog_sniffer
+Listens for UDP/TCP traffic, counts the number of packages and takes a sample of the Syslog events and outputs the result in JSON.
 
 ## Install
 
