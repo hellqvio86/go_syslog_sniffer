@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
@@ -185,13 +184,13 @@ func main() {
 	}
 	sort.Strings(keys)
 
-	fmt.Println("Sample events:")
+	/*fmt.Println("Sample events:")
 	for _, key := range keys {
 		fmt.Print("IP: ")
 		fmt.Print(key)
 		fmt.Print(" Syslog message: ")
 		fmt.Println(ipAddrs[key].SampleEvent.Payload)
-	}
+	}*/
 
 	jsonByte, err := json.Marshal(ipAddrs)
 	if err != nil {
@@ -199,23 +198,27 @@ func main() {
 	}
 	jsonRawUnescapedBytes, _ := _UnescapeUnicodeCharactersInJSON(jsonByte)
 
-	_ = ioutil.WriteFile("syslog_flow.json", jsonRawUnescapedBytes, 0644)
+	//_ = ioutil.WriteFile("syslog_flow.json", jsonRawUnescapedBytes, 0644)
 
 	//fmt.Println("\n")
 	//look_for_invalid_timestamps(keys)
 	//fmt.Println("\n")
 
-	fmt.Println("IP,ipv4Package,ipv6Package,udpDatagrams,tcpPackages")
-	for _, key := range keys {
-		fmt.Print(key)
-		fmt.Print(",")
-		fmt.Print(ipAddrs[key].IPv4Package)
-		fmt.Print(",")
-		fmt.Print(ipAddrs[key].IPv6Package)
-		fmt.Print(",")
-		fmt.Print(ipAddrs[key].UDPDatagrams)
-		fmt.Print(",")
-		fmt.Print(ipAddrs[key].TCPPackages)
-		fmt.Println("")
-	}
+	fmt.Println(string(jsonRawUnescapedBytes))
+
+	/*
+		fmt.Println("IP,ipv4Package,ipv6Package,udpDatagrams,tcpPackages")
+		for _, key := range keys {
+			fmt.Print(key)
+			fmt.Print(",")
+			fmt.Print(ipAddrs[key].IPv4Package)
+			fmt.Print(",")
+			fmt.Print(ipAddrs[key].IPv6Package)
+			fmt.Print(",")
+			fmt.Print(ipAddrs[key].UDPDatagrams)
+			fmt.Print(",")
+			fmt.Print(ipAddrs[key].TCPPackages)
+			fmt.Println("")
+		}
+	*/
 }
