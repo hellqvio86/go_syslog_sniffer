@@ -24,3 +24,10 @@ go get github.com/google/gopacket/pcap
 ```console
 make build
 ```
+
+## Commandline arguments
+| Argument | Description                              |
+| -------- |:----------------------------------------:| 
+| -i       | Interface to listen on. Default eth0     | 
+| -p       | Port to listen for                       |   
+| -t       | Number of seconds to listen on interface | 
