@@ -69,15 +69,6 @@ func analysePacket(pkt gopacket.Packet) {
 		ip, _ := ipLayer.(*layers.IPv4)
 		scrIP = ip.SrcIP.String()
 
-		// IP layer variables:
-		// Version (Either 4 or 6)
-		// IHL (IP Header Length in 32-bit words)
-		// TOS, Length, Id, Flags, FragOffset, TTL, Protocol (TCP?),
-		// Checksum, SrcIP, DstIP
-		//fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
-		//fmt.Println("Protocol: ", ip.Protocol)
-		//fmt.Println()
-
 		sysloghost := ipAddrs[scrIP]
 		sysloghost.IPv4Package = sysloghost.IPv4Package + 1
 		ipAddrs[scrIP] = sysloghost
@@ -88,14 +79,6 @@ func analysePacket(pkt gopacket.Packet) {
 		//fmt.Println("IPv6 layer detected.")
 		ip, _ := ip6Layer.(*layers.IPv6)
 		scrIP = ip.SrcIP.String()
-
-		// IP layer variables:
-		// Version (Either 4 or 6)
-		// IHL (IP Header Length in 32-bit words)
-		// TOS, Length, Id, Flags, FragOffset, TTL, Protocol (TCP?),
-		// Checksum, SrcIP, DstIP
-		//fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
-		//fmt.Println()
 
 		sysloghost := ipAddrs[scrIP]
 		sysloghost.IPv6Package = sysloghost.IPv6Package + 1
@@ -120,8 +103,6 @@ func analysePacket(pkt gopacket.Packet) {
 }
 
 func sniff(intf string, bpffiler string, duration time.Duration) {
-	//handle, err := pcap.OpenLive(intf, defaultSnapLen, true, pcap.BlockForever)
-	//handle, err := pcap.OpenLive(intf, defaultSnapLen, true, duration)
 	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, 1000)
 	if err != nil {
 		panic(err)
@@ -131,7 +112,7 @@ func sniff(intf string, bpffiler string, duration time.Duration) {
 	if err := handle.SetBPFFilter(bpffiler); err != nil {
 		panic(err)
 	}
-	//timer := time.NewTicker(2 * time.Second)
+
 	timer := time.NewTicker(duration)
 	defer timer.Stop()
 
@@ -184,41 +165,11 @@ func main() {
 	}
 	sort.Strings(keys)
 
-	/*fmt.Println("Sample events:")
-	for _, key := range keys {
-		fmt.Print("IP: ")
-		fmt.Print(key)
-		fmt.Print(" Syslog message: ")
-		fmt.Println(ipAddrs[key].SampleEvent.Payload)
-	}*/
-
 	jsonByte, err := json.Marshal(ipAddrs)
 	if err != nil {
 		log.Println("Failed with json Mashal", err)
 	}
 	jsonRawUnescapedBytes, _ := _UnescapeUnicodeCharactersInJSON(jsonByte)
 
-	//_ = ioutil.WriteFile("syslog_flow.json", jsonRawUnescapedBytes, 0644)
-
-	//fmt.Println("\n")
-	//look_for_invalid_timestamps(keys)
-	//fmt.Println("\n")
-
 	fmt.Println(string(jsonRawUnescapedBytes))
-
-	/*
-		fmt.Println("IP,ipv4Package,ipv6Package,udpDatagrams,tcpPackages")
-		for _, key := range keys {
-			fmt.Print(key)
-			fmt.Print(",")
-			fmt.Print(ipAddrs[key].IPv4Package)
-			fmt.Print(",")
-			fmt.Print(ipAddrs[key].IPv6Package)
-			fmt.Print(",")
-			fmt.Print(ipAddrs[key].UDPDatagrams)
-			fmt.Print(",")
-			fmt.Print(ipAddrs[key].TCPPackages)
-			fmt.Println("")
-		}
-	*/
 }
