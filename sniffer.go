@@ -18,8 +18,8 @@ import (
 )
 
 type syslogCapture struct {
-	Payload   string `json:"payload"`
-	Unix_time int64  `json:"unix_time"`
+	Payload  string `json:"payload"`
+	UnixTime int64  `json:"unixTime"`
 }
 type sysloghost struct {
 	IPv4Package  uint64        `json:"ipv4Package"`
@@ -36,11 +36,11 @@ const (
 	defaultSnapLen = 262144
 )
 
-func add_payload_to_map(srcIp string, pkt gopacket.Packet) {
+func addPayloadToMap(srcIP string, pkt gopacket.Packet) {
 	var syslogMsgRegexp = regexp.MustCompile(`.*<\d+>.*$`)
-	syslog_host := ipAddrs[srcIp]
+	syslogHost := ipAddrs[srcIP]
 
-	if syslog_host.SampleEvent.Payload != "" {
+	if syslogHost.SampleEvent.Payload != "" {
 		// Seen before
 		return
 	}
@@ -48,26 +48,26 @@ func add_payload_to_map(srcIp string, pkt gopacket.Packet) {
 	applicationLayer := pkt.ApplicationLayer()
 	if applicationLayer != nil {
 		payload := string(applicationLayer.Payload())
-		//log.Print("Source ip: ", srcIp, " Payload: ", payload)
+		//log.Print("Source ip: ", srcIP, " Payload: ", payload)
 
 		if syslogMsgRegexp.MatchString(payload) {
-			new_syslog_msg := syslogCapture{payload, time.Now().Unix()}
-			syslog_host.SampleEvent = new_syslog_msg
+			newSyslogMsg := syslogCapture{payload, time.Now().Unix()}
+			syslogHost.SampleEvent = newSyslogMsg
 
-			ipAddrs[srcIp] = syslog_host
+			ipAddrs[srcIP] = syslogHost
 		}
 	}
 }
 
-func analyse_packet(pkt gopacket.Packet) {
+func analysePacket(pkt gopacket.Packet) {
 	// Let's see if the packet is IP (even though the ether type told us)
 	ipLayer := pkt.Layer(layers.LayerTypeIPv4)
-	scrIp := ""
+	scrIP := ""
 
 	if ipLayer != nil {
 		//fmt.Println("IPv4 layer detected.")
 		ip, _ := ipLayer.(*layers.IPv4)
-		scrIp = ip.SrcIP.String()
+		scrIP = ip.SrcIP.String()
 
 		// IP layer variables:
 		// Version (Either 4 or 6)
@@ -78,16 +78,16 @@ func analyse_packet(pkt gopacket.Packet) {
 		//fmt.Println("Protocol: ", ip.Protocol)
 		//fmt.Println()
 
-		sysloghost := ipAddrs[scrIp]
+		sysloghost := ipAddrs[scrIP]
 		sysloghost.IPv4Package = sysloghost.IPv4Package + 1
-		ipAddrs[scrIp] = sysloghost
+		ipAddrs[scrIP] = sysloghost
 	}
 
 	ip6Layer := pkt.Layer(layers.LayerTypeIPv6)
 	if ip6Layer != nil {
 		//fmt.Println("IPv6 layer detected.")
 		ip, _ := ip6Layer.(*layers.IPv6)
-		scrIp = ip.SrcIP.String()
+		scrIP = ip.SrcIP.String()
 
 		// IP layer variables:
 		// Version (Either 4 or 6)
@@ -97,26 +97,26 @@ func analyse_packet(pkt gopacket.Packet) {
 		//fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
 		//fmt.Println()
 
-		sysloghost := ipAddrs[scrIp]
+		sysloghost := ipAddrs[scrIP]
 		sysloghost.IPv6Package = sysloghost.IPv6Package + 1
-		ipAddrs[scrIp] = sysloghost
+		ipAddrs[scrIP] = sysloghost
 	}
 
 	tcpLayer := pkt.Layer(layers.LayerTypeTCP)
 	if tcpLayer != nil {
-		sysloghost := ipAddrs[scrIp]
+		sysloghost := ipAddrs[scrIP]
 		sysloghost.TCPPackages = sysloghost.TCPPackages + 1
-		ipAddrs[scrIp] = sysloghost
+		ipAddrs[scrIP] = sysloghost
 	}
 
 	udpLayer := pkt.Layer(layers.LayerTypeUDP)
 	if udpLayer != nil {
-		sysloghost := ipAddrs[scrIp]
+		sysloghost := ipAddrs[scrIP]
 		sysloghost.UDPDatagrams = sysloghost.UDPDatagrams + 1
-		ipAddrs[scrIp] = sysloghost
+		ipAddrs[scrIP] = sysloghost
 	}
 
-	add_payload_to_map(scrIp, pkt)
+	addPayloadToMap(scrIP, pkt)
 }
 
 func sniff(intf string, bpffiler string, duration time.Duration) {
@@ -140,7 +140,7 @@ func sniff(intf string, bpffiler string, duration time.Duration) {
 		select {
 		case pkt := <-src.Packets():
 			// process a packet in pkt
-			analyse_packet(pkt)
+			analysePacket(pkt)
 		case <-timer.C:
 			// timed out waiting for 2s seconds
 			return
