@@ -32,3 +32,9 @@ make build
 | -i       | Interface to listen on                   | eth0    |
 | -p       | Port to listen for                       | 514     | 
 | -t       | Number of seconds to listen on interface | 60      |
+
+<p align="right">
+  <a href="https://www.buymeacoffee.com/olofhellqvc">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="48">
+  </a>
+</p>
