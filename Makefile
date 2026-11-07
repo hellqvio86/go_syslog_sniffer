@@ -42,7 +42,7 @@ lint: ## Run linter and static analysis
 	fi
 
 coverage: ## Generate test coverage report
-	go test -coverprofile=coverage.out ./...
+	go test -coverprofile=coverage.out ./pkg/...
 	go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | grep total | awk '{print "Total coverage: " $$3}'
 
