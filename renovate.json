@@ -20,7 +20,13 @@
     },
     {
       "matchManagers": ["github-actions"],
-      "groupName": "github-actions"
+      "groupName": "github-actions",
+      "pinDigests": true
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker base images",
+      "pinDigests": true
     }
   ]
 }

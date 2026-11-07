@@ -19,7 +19,7 @@ if [[ -f "${REPO_ROOT}/.env" ]]; then
 fi
 
 CACHE_DIR="${HOME}/.cache/renovate"
-RENOVATE_IMAGE="${RENOVATE_IMAGE:-ghcr.io/renovatebot/renovate:latest}"
+RENOVATE_IMAGE="${RENOVATE_IMAGE:-ghcr.io/renovatebot/renovate:44.181.2}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 DRY_RUN="full"
 PLATFORM=""

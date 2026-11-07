@@ -157,7 +157,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Problem:** Each push to `main` pushes `latest` **and** the `VERSION` tag (and semver tags derived from it). A version tag like `0.1.0` is overwritten until someone bumps `VERSION`. The README says `latest` "tracks the latest release", which is not true.
 - **Fix:** Push `<version>`/semver/`latest` only on release events or when `VERSION` changed; on plain pushes publish `edge` and `sha-<short>`. The `draft-release` job compares `VERSION` with `HEAD~1` only; use `github.event.before` so multi-commit pushes don't miss a bump. Expose the "changed" output and reuse it.
 
-### [ ] C2. Two dependency bots on the same repo
+### [x] C2. Two dependency bots on the same repo
 - Both `.github/dependabot.yml` (gomod, weekly) and `renovate.json` (+ `bin/renovate/run.sh`) are active; git history shows PRs from both (for example the `golang.org/x/net` bump). Pick one (Renovate also covers Actions and Docker). In `run.sh` stop using `ghcr.io/renovatebot/renovate:latest`; pin it. Enable `pinDigests` for Actions and Docker base images.
 
 ### [ ] C3. Workflow hardening
