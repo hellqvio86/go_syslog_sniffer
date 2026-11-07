@@ -152,7 +152,7 @@ This replaces my earlier review, which was written against the old single-file `
 
 ## P4 — CI, packaging, supply chain
 
-### [ ] C1. Image tags are mutable and published on every push to `main`
+### [x] C1. Image tags are mutable and published on every push to `main`
 - **Where:** `.github/workflows/ci.yml`, job `publish-docker` (`if: github.ref == 'refs/heads/main' || github.event_name == 'release'`).
 - **Problem:** Each push to `main` pushes `latest` **and** the `VERSION` tag (and semver tags derived from it). A version tag like `0.1.0` is overwritten until someone bumps `VERSION`. The README says `latest` "tracks the latest release", which is not true.
 - **Fix:** Push `<version>`/semver/`latest` only on release events or when `VERSION` changed; on plain pushes publish `edge` and `sha-<short>`. The `draft-release` job compares `VERSION` with `HEAD~1` only; use `github.event.before` so multi-commit pushes don't miss a bump. Expose the "changed" output and reuse it.
