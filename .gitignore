@@ -1,0 +1,13 @@
+# Binaries
+syslog_sniffer
+sniffer
+
+# Coverage and test artifacts
+coverage.out
+coverage.html
+sniffer_output_*.txt
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp

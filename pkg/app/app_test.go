@@ -1,0 +1,153 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
+	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
+	"github.com/hellqvio86/go_syslog_sniffer/pkg/stats"
+)
+
+func TestRunSniffer_Basic(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		Debug:     false,
+	}
+
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte("<165>1 2026-11-07T12:00:00Z hostA app 1 - - Test message 1"),
+			SrcIP: "10.0.0.1",
+		},
+		{
+			Data:  []byte("<165>1 2026-11-07T12:00:01Z hostA app 1 - - Test message 2"),
+			SrcIP: "10.0.0.1",
+		},
+		{
+			Data:  []byte("<13>Oct 11 22:14:15 hostB login: ok"),
+			SrcIP: "10.0.0.2",
+		},
+	}
+
+	mockSource := capture.NewMockPacketSource(packets)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	ctx := context.Background()
+	err := RunSniffer(ctx, cfg, mockSource, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if stderr.Len() > 0 {
+		t.Errorf("expected no stderr output, got: %s", stderr.String())
+	}
+
+	var summary stats.JsonSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to parse stdout json: %v\nOutput: %s", err, stdout.String())
+	}
+
+	if summary.IntervalSeconds != 1 {
+		t.Errorf("expected interval 1, got %d", summary.IntervalSeconds)
+	}
+	if len(summary.Hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d", len(summary.Hosts))
+	}
+
+	hostA := summary.Hosts["hostA"]
+	if hostA.Count != 2 {
+		t.Errorf("expected hostA count 2, got %d", hostA.Count)
+	}
+	if !strings.Contains(hostA.Sample, "Test message 1") {
+		t.Errorf("expected hostA sample to be first message, got %q", hostA.Sample)
+	}
+
+	hostB := summary.Hosts["hostB"]
+	if hostB.Count != 1 {
+		t.Errorf("expected hostB count 1, got %d", hostB.Count)
+	}
+	if !strings.Contains(hostB.Sample, "login: ok") {
+		t.Errorf("expected hostB sample, got %q", hostB.Sample)
+	}
+}
+
+func TestRunSniffer_Debug(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		Debug:     true,
+	}
+
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte("<13>msg"),
+			SrcIP: "192.168.1.10",
+		},
+	}
+
+	mockSource := capture.NewMockPacketSource(packets)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	err := RunSniffer(context.Background(), cfg, mockSource, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "DEBUG: Port to sniff") {
+		t.Errorf("expected debug output in stderr, got: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "DEBUG: Captured from 192.168.1.10") {
+		t.Errorf("expected capture log in stderr, got: %s", stderr.String())
+	}
+}
+
+func TestRunSniffer_ContextCancel(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  60, // large interval
+	}
+
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte("<13>early exit msg"),
+			SrcIP: "127.0.0.1",
+		},
+	}
+
+	mockSource := capture.NewMockPacketSource(packets)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel after brief delay
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := RunSniffer(ctx, cfg, mockSource, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var summary stats.JsonSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to parse stdout json: %v", err)
+	}
+
+	if len(summary.Hosts) != 1 {
+		t.Errorf("expected 1 host on early exit, got %d", len(summary.Hosts))
+	}
+}

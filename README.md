@@ -1,37 +1,122 @@
-# Syslog sniffer written in Go
-Listens for UDP/TCP traffic, counts the number of packages and takes a sample of the Syslog events and outputs the result in JSON.
+# Go Syslog Sniffer
 
-## Install
+[![CI](https://github.com/hellqvio86/go_syslog_sniffer/actions/workflows/ci.yml/badge.svg)](https://github.com/hellqvio86/go_syslog_sniffer/actions/workflows/ci.yml)
 
-### Dependencies
+A high-performance syslog packet sniffer written in Go.
+Captures syslog network traffic (UDP/TCP), parses RFC 5424 and RFC 3164 messages, counts events per host, takes a sample of the events, and outputs formatted JSON.
 
-#### OS packages
+## Features
+
+- **Live Capture**: Uses libpcap / gopacket to capture network traffic on physical or loopback interfaces.
+- **Syslog Parsing**: Automatically identifies and parses RFC 5424 and RFC 3164 syslog formats to extract originating hostnames.
+- **Payload Preservation**: Retains complete syslog payloads (including multi-line and newline-terminated messages) without truncation or regex drops.
+- **Flexible Reporting**: Standard total summary mode or `--periodic` reporting mode.
+- **Clean JSON Output**: Emits unescaped, formatted JSON summary reports.
+- **Graceful Termination**: Intercepts `SIGINT`/`SIGTERM` to cleanly output stats captured up to the moment of termination.
+
+## Building and Running
+
+### Prerequisites
 
 ```console
-sudo apt install golang-go
-sudo apt install libpcap-dev
+# Debian / Ubuntu
+sudo apt install -y golang libpcap-dev netcat-openbsd make
 ```
 
-#### Golang libraries
+### Local Build
 
-```console
-go get github.com/google/gopacket
-go get github.com/google/gopacket/layers
-go get github.com/google/gopacket/pcap
-```
-
-## Compile
-
-```console
+```bash
+# Build the project
 make build
+
+# Run unit tests
+make test
+
+# Generate test coverage report
+make coverage
 ```
 
-## Commandline arguments
-| Argument | Description                              | Default |
-| -------- |:----------------------------------------:|:-------:|
-| -i       | Interface to listen on                   | eth0    |
-| -p       | Port to listen for                       | 514     | 
-| -t       | Number of seconds to listen on interface | 60      |
+### Usage
+
+```bash
+syslog_sniffer [OPTIONS]
+
+Options:
+  -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo)
+  -p, --port <PORT>             Syslog port to monitor (default: 514)
+  -t, --interval <SECONDS>      Duration in seconds to capture (default: 10)
+  -d, --debug                   Enable debug diagnostic logging
+      --periodic                Enable periodic summary output
+      --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)
+  -h, --help                    Print usage instructions
+```
+
+### Example Output
+
+```json
+{
+  "interval_seconds": 10,
+  "hosts": {
+    "mymachine.example.com": {
+      "count": 42,
+      "sample": "<165>1 2026-11-07T12:00:00.000Z mymachine.example.com appname[123] - ID47 [exampleSDID@32473] Sample log entry"
+    }
+  }
+}
+```
+
+## Docker
+
+### Build Docker Image
+
+```bash
+make docker-build
+```
+
+### Run Docker Container
+
+The container requires `NET_RAW` and `NET_ADMIN` capabilities for raw packet capture, and `--network host` to access network interfaces:
+
+```bash
+docker run --rm \
+  --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  --network host \
+  syslog_sniffer:latest --interface eth0 --port 514
+```
+
+Or using Makefile:
+
+```bash
+make docker-run ARGS="--interface eth0 --port 514"
+```
+
+## Available Make Targets
+
+Run `make help` to see all available targets:
+
+```text
+make build              # Build the Go application
+make test               # Run unit tests
+make lint               # Run linter and static analysis
+make fmt                # Format Go source files
+make coverage           # Generate test coverage report
+make docker-build       # Build Docker image
+make docker-run         # Run Docker container
+make clean              # Clean build artifacts
+```
+
+## CI/CD
+
+Continuous integration runs via GitHub Actions on every push and pull request to `main`:
+- Code formatting check (`gofmt`)
+- Go static analysis (`go vet`)
+- Unit tests with race detection (`go test -v -race`)
+- Container image build and end-to-end integration tests (`tests/e2e_docker.sh`, `tests/e2e_periodic_docker.sh`)
+
+## License
+
+[MIT](LICENSE)
 
 <p align="right">
   <a href="https://www.buymeacoffee.com/olofhellqvc">
