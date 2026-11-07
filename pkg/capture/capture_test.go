@@ -328,3 +328,34 @@ func TestNextPacket_TCPHandshakeAndData(t *testing.T) {
 		t.Errorf("expected payload '<13>Hello from client', got %q", string(received[0].Data))
 	}
 }
+
+func TestPcapPacketSource_StatsAndClose(t *testing.T) {
+	// 1. PcapPacketSource with nil handle returns nil stats without error
+	p := &PcapPacketSource{}
+	st, err := p.Stats()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if st != nil {
+		t.Errorf("expected nil stats for nil handle, got %+v", st)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+
+	// 2. MockPacketSource Stats
+	mock := &MockPacketSource{
+		MockStats: &Stats{
+			PacketsReceived:  50,
+			PacketsDropped:   2,
+			PacketsIfDropped: 0,
+		},
+	}
+	mst, err := mock.Stats()
+	if err != nil {
+		t.Fatalf("unexpected mock stats error: %v", err)
+	}
+	if mst == nil || mst.PacketsReceived != 50 || mst.PacketsDropped != 2 {
+		t.Errorf("unexpected mock stats: %+v", mst)
+	}
+}

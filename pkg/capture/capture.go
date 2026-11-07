@@ -16,9 +16,17 @@ import (
 var ErrCaptureClosed = errors.New("capture closed")
 
 const (
-	defaultSnapLen = 262144
-	readTimeout    = 250 * time.Millisecond
+	defaultSnapLen    = 262144
+	defaultBufferSize = 8 * 1024 * 1024 // 8 MB buffer for busy collectors
+	readTimeout       = 250 * time.Millisecond
 )
+
+// Stats holds kernel and interface packet capture statistics.
+type Stats struct {
+	PacketsReceived  int `json:"received"`
+	PacketsDropped   int `json:"dropped"`
+	PacketsIfDropped int `json:"if_dropped"`
+}
 
 // PacketData contains the payload bytes and source IP extracted from a captured packet.
 type PacketData struct {
@@ -31,12 +39,14 @@ type PacketData struct {
 type PacketSource interface {
 	NextPacket() (*PacketData, error)
 	Close() error
+	Stats() (*Stats, error)
 }
 
 // PcapPacketSource captures packets live from a network interface using libpcap.
 type PcapPacketSource struct {
-	handle  *pcap.Handle
-	packets <-chan gopacket.Packet
+	handle    *pcap.Handle
+	packets   <-chan gopacket.Packet
+	lastStats *Stats
 }
 
 // BuildBPFFilter creates a BPF filter expression for the specified direction and ports.
@@ -66,6 +76,20 @@ func BuildBPFFilter(direction string, ports ...int) string {
 	return fmt.Sprintf("(%s)", strings.Join(parts, " or "))
 }
 
+func formatInterfaceError(intf string, phase string, err error) error {
+	devs, findErr := pcap.FindAllDevs()
+	var candidateNames []string
+	if findErr == nil {
+		for _, d := range devs {
+			candidateNames = append(candidateNames, d.Name)
+		}
+	}
+	if len(candidateNames) > 0 {
+		return fmt.Errorf("failed to %s interface %s: %w (available interfaces: %s)", phase, intf, err, strings.Join(candidateNames, ", "))
+	}
+	return fmt.Errorf("failed to %s interface %s: %w", phase, intf, err)
+}
+
 // NewPcapPacketSource opens a live pcap handle on the given interface and port with default "dst" direction.
 func NewPcapPacketSource(intf string, port int) (*PcapPacketSource, error) {
 	return NewPcapPacketSourceWithDirection(intf, port, "dst")
@@ -73,19 +97,26 @@ func NewPcapPacketSource(intf string, port int) (*PcapPacketSource, error) {
 
 // NewPcapPacketSourceWithDirection opens a live pcap handle with explicit direction ("dst", "src", or "both").
 func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (*PcapPacketSource, error) {
-	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, readTimeout)
+	inactive, err := pcap.NewInactiveHandle(intf)
 	if err != nil {
-		devs, findErr := pcap.FindAllDevs()
-		var candidateNames []string
-		if findErr == nil {
-			for _, d := range devs {
-				candidateNames = append(candidateNames, d.Name)
-			}
-		}
-		if len(candidateNames) > 0 {
-			return nil, fmt.Errorf("failed to open interface %s: %w (available interfaces: %s)", intf, err, strings.Join(candidateNames, ", "))
-		}
-		return nil, fmt.Errorf("failed to open interface %s: %w", intf, err)
+		return nil, formatInterfaceError(intf, "open", err)
+	}
+	defer inactive.CleanUp()
+
+	if err := inactive.SetSnapLen(defaultSnapLen); err != nil {
+		return nil, fmt.Errorf("failed to set snaplen on interface %s: %w", intf, err)
+	}
+	if err := inactive.SetPromisc(true); err != nil {
+		return nil, fmt.Errorf("failed to set promisc on interface %s: %w", intf, err)
+	}
+	if err := inactive.SetTimeout(readTimeout); err != nil {
+		return nil, fmt.Errorf("failed to set timeout on interface %s: %w", intf, err)
+	}
+	_ = inactive.SetBufferSize(defaultBufferSize)
+
+	handle, err := inactive.Activate()
+	if err != nil {
+		return nil, formatInterfaceError(intf, "open", err)
 	}
 
 	filter := BuildBPFFilter(direction, port)
@@ -145,10 +176,33 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 	}
 }
 
-// Close closes the underlying pcap handle.
+// Stats returns capture statistics from the underlying pcap handle, or the last cached stats if closed.
+func (p *PcapPacketSource) Stats() (*Stats, error) {
+	if p.handle != nil {
+		if st, err := p.handle.Stats(); err == nil && st != nil {
+			p.lastStats = &Stats{
+				PacketsReceived:  st.PacketsReceived,
+				PacketsDropped:   st.PacketsDropped,
+				PacketsIfDropped: st.PacketsIfDropped,
+			}
+			return p.lastStats, nil
+		}
+	}
+	return p.lastStats, nil
+}
+
+// Close closes the underlying pcap handle after saving final statistics.
 func (p *PcapPacketSource) Close() error {
 	if p.handle != nil {
+		if st, err := p.handle.Stats(); err == nil && st != nil {
+			p.lastStats = &Stats{
+				PacketsReceived:  st.PacketsReceived,
+				PacketsDropped:   st.PacketsDropped,
+				PacketsIfDropped: st.PacketsIfDropped,
+			}
+		}
 		p.handle.Close()
+		p.handle = nil
 	}
 	return nil
 }
@@ -158,6 +212,7 @@ type MockPacketSource struct {
 	packets            []*PacketData
 	idx                int
 	ReturnEOFOnExhaust bool
+	MockStats          *Stats
 }
 
 // NewMockPacketSource creates a mock packet source with a predetermined packet sequence.
@@ -165,6 +220,11 @@ func NewMockPacketSource(packets []*PacketData) *MockPacketSource {
 	return &MockPacketSource{
 		packets: packets,
 	}
+}
+
+// Stats returns the configured MockStats.
+func (m *MockPacketSource) Stats() (*Stats, error) {
+	return m.MockStats, nil
 }
 
 // NextPacket returns the next mock packet or (nil, nil) (or io.EOF if ReturnEOFOnExhaust is set) when exhausted.

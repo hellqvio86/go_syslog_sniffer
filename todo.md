@@ -89,7 +89,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** Validate port 1–65535 in `ParseArgs`. Default to `any` on Linux (supported by libpcap) or, on failure to open, list candidates via `pcap.FindAllDevs()` in the error message. Add `--list-interfaces`.
 - **Acceptance:** tests for out-of-range ports; error message for an unknown interface contains the available device names.
 
-### [ ] S4. Kernel/interface drops are invisible, so counts are only lower bounds
+### [x] S4. Kernel/interface drops are invisible, so counts are only lower bounds
 - **Where:** `capture` (no use of `handle.Stats()`); README says "high-performance".
 - **Fix:** On `Close()`/end of run read `handle.Stats()` and report `capture_stats {received, dropped, if_dropped}` (stderr in debug mode, and as an optional JSON object). For busy collectors use `pcap.NewInactiveHandle` + `SetBufferSize` before `Activate`.
 - **Acceptance:** stats appear in debug output; documented in README as "counts are lower bounds when drops > 0".

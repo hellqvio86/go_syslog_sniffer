@@ -59,6 +59,17 @@ func RunSniffer(
 		// Handle periodic output
 		if cfg.Periodic && time.Since(lastReportTime) >= time.Duration(cfg.Frequency)*time.Second {
 			if !statsTracker.IsEmpty() {
+				if cs, err := source.Stats(); err == nil && cs != nil {
+					statsTracker.SetCaptureStats(&stats.CaptureStats{
+						PacketsReceived:  cs.PacketsReceived,
+						PacketsDropped:   cs.PacketsDropped,
+						PacketsIfDropped: cs.PacketsIfDropped,
+					})
+					if cfg.Debug {
+						fmt.Fprintf(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
+							cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
+					}
+				}
 				summary := statsTracker.GetSummary(cfg.Frequency)
 				if err := writeJSONPretty(stdout, summary); err != nil {
 					return err
@@ -136,6 +147,18 @@ func RunSniffer(
 	}
 
 	// Output final report
+	if cs, err := source.Stats(); err == nil && cs != nil {
+		statsTracker.SetCaptureStats(&stats.CaptureStats{
+			PacketsReceived:  cs.PacketsReceived,
+			PacketsDropped:   cs.PacketsDropped,
+			PacketsIfDropped: cs.PacketsIfDropped,
+		})
+		if cfg.Debug {
+			fmt.Fprintf(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
+				cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
+		}
+	}
+
 	if !cfg.Periodic || !statsTracker.IsEmpty() {
 		var interval uint64
 		if cfg.Periodic {

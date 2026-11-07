@@ -86,6 +86,11 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
   "ignored": {
     "no_payload": 5,
     "not_syslog": 2
+  },
+  "capture_stats": {
+    "received": 120,
+    "dropped": 0,
+    "if_dropped": 0
   }
 }
 ```
@@ -94,6 +99,7 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 
 - **Multi-Message TCP Streams**: Newline-framed syslog messages arriving within a single TCP segment are split and counted individually.
 - **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be inspected. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
+- **Kernel & Interface Drops**: On packet capture termination or periodic reporting, kernel and interface statistics (`received`, `dropped`, `if_dropped`) are retrieved via `pcap_stats` and reported in `capture_stats` (and logged to `stderr` in `--debug` mode). Note that packet and host counts are lower bounds when drops > 0.
 - **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams) and non-syslog payloads are tracked in the top-level `ignored` section.
 - **UDP Fragmentation**: Large UDP syslog datagrams exceeding network MTU that undergo IP fragmentation only match port filters on the first fragment.
 

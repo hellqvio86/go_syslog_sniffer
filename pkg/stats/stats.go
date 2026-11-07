@@ -11,6 +11,13 @@ type IgnoredCounters struct {
 	NonUTF8Sanitized uint64 `json:"non_utf8_sanitized,omitempty"`
 }
 
+// CaptureStats holds kernel and interface packet capture statistics.
+type CaptureStats struct {
+	PacketsReceived  int `json:"received"`
+	PacketsDropped   int `json:"dropped"`
+	PacketsIfDropped int `json:"if_dropped"`
+}
+
 // HostStats contains the packet count, IP, claimed hostname, sample message, and security flags.
 type HostStats struct {
 	Count           uint64 `json:"count"`
@@ -27,6 +34,7 @@ type JsonSummary struct {
 	Hosts           map[string]HostStats `json:"hosts"`
 	OverflowEvents  uint64               `json:"overflow_events,omitempty"`
 	Ignored         IgnoredCounters      `json:"ignored,omitempty"`
+	CaptureStats    *CaptureStats        `json:"capture_stats,omitempty"`
 }
 
 // StatsTracker tracks packet counts and samples thread-safely.
@@ -39,6 +47,7 @@ type StatsTracker struct {
 	redactSample   bool
 	overflowEvents uint64
 	ignored        IgnoredCounters
+	captureStats   *CaptureStats
 }
 
 // NewStatsTracker creates a StatsTracker with default limits (10000 max hosts, 2048 sample bytes).
@@ -164,6 +173,13 @@ func (st *StatsTracker) IsEmpty() bool {
 	return len(st.stats) == 0
 }
 
+// SetCaptureStats updates the capture statistics reported in summary output.
+func (st *StatsTracker) SetCaptureStats(cs *CaptureStats) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.captureStats = cs
+}
+
 // Clear resets all tracked stats and overflow counters.
 func (st *StatsTracker) Clear() {
 	st.mu.Lock()
@@ -171,6 +187,7 @@ func (st *StatsTracker) Clear() {
 	st.stats = make(map[string]*HostStats)
 	st.overflowEvents = 0
 	st.ignored = IgnoredCounters{}
+	st.captureStats = nil
 }
 
 // GetSummary returns a snapshot of the current stats.
@@ -190,10 +207,17 @@ func (st *StatsTracker) GetSummary(intervalSeconds uint64) JsonSummary {
 		}
 	}
 
+	var csCopy *CaptureStats
+	if st.captureStats != nil {
+		c := *st.captureStats
+		csCopy = &c
+	}
+
 	return JsonSummary{
 		IntervalSeconds: intervalSeconds,
 		Hosts:           hostsCopy,
 		OverflowEvents:  st.overflowEvents,
 		Ignored:         st.ignored,
+		CaptureStats:    csCopy,
 	}
 }

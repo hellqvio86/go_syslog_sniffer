@@ -218,6 +218,10 @@ func (f *faultyPacketSource) Close() error {
 	return nil
 }
 
+func (f *faultyPacketSource) Stats() (*capture.Stats, error) {
+	return nil, nil
+}
+
 func TestRunSniffer_PersistentErrors(t *testing.T) {
 	cfg := &config.Config{
 		Interface: "lo",
@@ -261,6 +265,10 @@ func (p *pacedPacketSource) NextPacket() (*capture.PacketData, error) {
 
 func (p *pacedPacketSource) Close() error {
 	return nil
+}
+
+func (p *pacedPacketSource) Stats() (*capture.Stats, error) {
+	return nil, nil
 }
 
 func TestRunSniffer_PeriodicMultipleReports(t *testing.T) {
@@ -456,5 +464,52 @@ func TestRunSniffer_S6NoSampleAndRedact(t *testing.T) {
 	}
 	if !strings.Contains(stdout2.String(), `"[REDACTED]"`) {
 		t.Errorf("expected '[REDACTED]' in JSON output, got: %s", stdout2.String())
+	}
+}
+
+func TestRunSniffer_S4CaptureStats(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		Debug:     true,
+	}
+
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte("<13>Oct 11 22:14:15 host app: test message"),
+			SrcIP: "10.0.0.7",
+		},
+	}
+
+	mock := capture.NewMockPacketSource(packets)
+	mock.ReturnEOFOnExhaust = true
+	mock.MockStats = &capture.Stats{
+		PacketsReceived:  250,
+		PacketsDropped:   12,
+		PacketsIfDropped: 3,
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	_ = RunSniffer(context.Background(), cfg, mock, &stdout, &stderr)
+
+	// Check debug stderr output
+	stderrStr := stderr.String()
+	if !strings.Contains(stderrStr, "DEBUG: Capture stats: received=250 dropped=12 if_dropped=3") {
+		t.Errorf("expected capture stats in debug stderr, got: %s", stderrStr)
+	}
+
+	// Check JSON stdout output
+	var summary stats.JsonSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if summary.CaptureStats == nil {
+		t.Fatalf("expected capture_stats in JSON output, got nil")
+	}
+	if summary.CaptureStats.PacketsReceived != 250 || summary.CaptureStats.PacketsDropped != 12 || summary.CaptureStats.PacketsIfDropped != 3 {
+		t.Errorf("unexpected capture stats in JSON: %+v", summary.CaptureStats)
 	}
 }

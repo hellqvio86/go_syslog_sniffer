@@ -200,3 +200,45 @@ func TestStatsTracker_S6SampleOptions(t *testing.T) {
 		t.Errorf("expected JSON to contain redacted sample, got: %s", string(bytesRedact))
 	}
 }
+
+func TestStatsTracker_S4CaptureStats(t *testing.T) {
+	st := NewStatsTracker()
+	st.AddEntry("10.0.0.1", "host1", "<13>test message")
+
+	// Initially no capture stats
+	sum1 := st.GetSummary(10)
+	if sum1.CaptureStats != nil {
+		t.Errorf("expected nil CaptureStats initially, got %+v", sum1.CaptureStats)
+	}
+
+	// Set capture stats
+	st.SetCaptureStats(&CaptureStats{
+		PacketsReceived:  100,
+		PacketsDropped:   5,
+		PacketsIfDropped: 1,
+	})
+
+	sum2 := st.GetSummary(10)
+	if sum2.CaptureStats == nil {
+		t.Fatalf("expected CaptureStats to be set, got nil")
+	}
+	if sum2.CaptureStats.PacketsReceived != 100 || sum2.CaptureStats.PacketsDropped != 5 || sum2.CaptureStats.PacketsIfDropped != 1 {
+		t.Errorf("unexpected capture stats values: %+v", sum2.CaptureStats)
+	}
+
+	// Verify JSON serialization includes capture_stats
+	b, err := json.Marshal(sum2)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"capture_stats":{"received":100,"dropped":5,"if_dropped":1}`) {
+		t.Errorf("expected capture_stats JSON, got: %s", string(b))
+	}
+
+	// Verify Clear resets capture stats
+	st.Clear()
+	sum3 := st.GetSummary(10)
+	if sum3.CaptureStats != nil {
+		t.Errorf("expected CaptureStats to be cleared, got %+v", sum3.CaptureStats)
+	}
+}
