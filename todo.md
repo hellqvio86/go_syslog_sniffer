@@ -45,7 +45,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** Count the packet, and sanitize only the sample: `strings.ToValidUTF8(msg, "\uFFFD")`, or add `"sample_encoding":"base64"` when the payload is not valid UTF-8. Never drop.
 - **Acceptance:** the probe case above yields a host entry with count 1 and a valid-JSON sample.
 
-### [ ] B3. BPF `port N` matches both directions
+### [x] B3. BPF `port N` matches both directions
 - **Where:** `NewPcapPacketSource` (`filter := fmt.Sprintf("port %d", port)`).
 - **Problem:** Replies from the collector (TCP ACKs, SYN-ACKs with source port 514) are captured too. Together with B1 they pollute counts and produce false hosts keyed by the collector's own IP.
 - **Fix:** default to `dst port N`; optionally `--direction dst|src|both`. Multiple ports: `--port 514,601` → `(dst port 514 or dst port 601)`.

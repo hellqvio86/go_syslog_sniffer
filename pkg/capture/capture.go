@@ -2,6 +2,7 @@ package capture
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/gopacket"
@@ -32,14 +33,46 @@ type PcapPacketSource struct {
 	packets <-chan gopacket.Packet
 }
 
-// NewPcapPacketSource opens a live pcap handle on the given interface and port.
+// BuildBPFFilter creates a BPF filter expression for the specified direction and ports.
+// Supported directions are "dst" (default), "src", and "both".
+func BuildBPFFilter(direction string, ports ...int) string {
+	if len(ports) == 0 {
+		ports = []int{514}
+	}
+	prefix := "dst port "
+	switch direction {
+	case "src":
+		prefix = "src port "
+	case "both":
+		prefix = "port "
+	default:
+		prefix = "dst port "
+	}
+
+	if len(ports) == 1 {
+		return fmt.Sprintf("%s%d", prefix, ports[0])
+	}
+
+	var parts []string
+	for _, p := range ports {
+		parts = append(parts, fmt.Sprintf("%s%d", prefix, p))
+	}
+	return fmt.Sprintf("(%s)", strings.Join(parts, " or "))
+}
+
+// NewPcapPacketSource opens a live pcap handle on the given interface and port with default "dst" direction.
 func NewPcapPacketSource(intf string, port int) (*PcapPacketSource, error) {
+	return NewPcapPacketSourceWithDirection(intf, port, "dst")
+}
+
+// NewPcapPacketSourceWithDirection opens a live pcap handle with explicit direction ("dst", "src", or "both").
+func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (*PcapPacketSource, error) {
 	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, readTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open interface %s: %w", intf, err)
 	}
 
-	filter := fmt.Sprintf("port %d", port)
+	filter := BuildBPFFilter(direction, port)
 	if err := handle.SetBPFFilter(filter); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("failed to set BPF filter %q: %w", filter, err)
