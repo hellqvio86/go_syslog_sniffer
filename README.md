@@ -78,13 +78,30 @@ Options:
 
 ## Docker
 
-### Build Docker Image
+### Published Image
+
+Published multi-architecture image:
+- **GitHub Container Registry (GHCR)**: [`ghcr.io/hellqvio86/go_syslog_sniffer`](https://github.com/hellqvio86/go_syslog_sniffer/pkgs/container/go_syslog_sniffer)
+
+Supported architectures:
+- `linux/amd64` (Standard 64-bit Intel/AMD)
+- `linux/arm64` (Raspberry Pi 4/5, Apple Silicon, AWS Graviton)
+
+Tags:
+- `latest` (tracks the latest release)
+- `<version>` (e.g., `0.1.0`)
+
+#### Pull Image from GHCR
 
 ```bash
-make docker-build
+# Pull latest release
+docker pull ghcr.io/hellqvio86/go_syslog_sniffer:latest
+
+# Or pull a specific release tag
+docker pull ghcr.io/hellqvio86/go_syslog_sniffer:0.1.0
 ```
 
-### Run Docker Container
+#### Run Published Container
 
 The container requires `NET_RAW` and `NET_ADMIN` capabilities for raw packet capture, and `--network host` to access network interfaces:
 
@@ -93,13 +110,43 @@ docker run --rm \
   --cap-add=NET_RAW \
   --cap-add=NET_ADMIN \
   --network host \
-  syslog_sniffer:latest --interface eth0 --port 514
+  ghcr.io/hellqvio86/go_syslog_sniffer:latest --interface eth0 --port 514
 ```
 
-Or using Makefile:
+Run with periodic reporting:
 
 ```bash
+docker run --rm \
+  --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  --network host \
+  ghcr.io/hellqvio86/go_syslog_sniffer:latest \
+  --interface eth0 \
+  --port 514 \
+  --periodic \
+  --frequency 5
+```
+
+### Local Docker Build
+
+To build and run the image locally from source:
+
+```bash
+# Build the Docker image locally
+make docker-build
+
+# Run the local container
 make docker-run ARGS="--interface eth0 --port 514"
+```
+
+Or manually:
+
+```bash
+docker run --rm \
+  --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  --network host \
+  syslog_sniffer:latest --interface eth0 --port 514
 ```
 
 ## Available Make Targets
