@@ -142,7 +142,7 @@ This replaces my earlier review, which was written against the old single-file `
 - Add table-driven cases from B1/B2/B4 plus `FuzzParseSyslogPacket` asserting: no panic, returned message is valid UTF-8, `json.Marshal` of the result round-trips.
 - Existing `TestParseNoHostname` asserts that plain text without PRI is accepted as syslog; it encodes the B1 bug and must be changed.
 
-### [ ] T2. Capture conversion
+### [x] T2. Capture conversion
 - `NextPacket`'s packet-to-`PacketData` logic (the part that matters) has no tests; capture coverage is 60% from the mock and the invalid-interface test only. Build frames with `gopacket.SerializeLayers` (appendix) for: TCP pure ACK, SYN-ACK, empty UDP, UDP with payload, IPv6, 802.1Q VLAN.
 
 ### [ ] T3. App

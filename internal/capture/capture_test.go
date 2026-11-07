@@ -53,6 +53,88 @@ func buildFrame(t *testing.T, l4 gopacket.SerializableLayer, payload []byte, pro
 	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
 }
 
+func buildIPv6Frame(t *testing.T, l4 gopacket.SerializableLayer, payload []byte, proto layers.IPProtocol) gopacket.Packet {
+	t.Helper()
+	eth := &layers.Ethernet{
+		SrcMAC:       net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
+		DstMAC:       net.HardwareAddr{0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb},
+		EthernetType: layers.EthernetTypeIPv6,
+	}
+	ip6 := &layers.IPv6{
+		Version:    6,
+		HopLimit:   64,
+		NextHeader: proto,
+		SrcIP:      net.ParseIP("2001:db8::42"),
+		DstIP:      net.ParseIP("2001:db8::1"),
+	}
+	switch v := l4.(type) {
+	case *layers.TCP:
+		if err := v.SetNetworkLayerForChecksum(ip6); err != nil {
+			t.Fatal(err)
+		}
+	case *layers.UDP:
+		if err := v.SetNetworkLayerForChecksum(ip6); err != nil {
+			t.Fatal(err)
+		}
+	}
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	var err error
+	if len(payload) > 0 {
+		err = gopacket.SerializeLayers(buf, opts, eth, ip6, l4, gopacket.Payload(payload))
+	} else {
+		err = gopacket.SerializeLayers(buf, opts, eth, ip6, l4)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
+}
+
+func buildVLANFrame(t *testing.T, l4 gopacket.SerializableLayer, payload []byte, proto layers.IPProtocol) gopacket.Packet {
+	t.Helper()
+	eth := &layers.Ethernet{
+		SrcMAC:       net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
+		DstMAC:       net.HardwareAddr{0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb},
+		EthernetType: layers.EthernetTypeDot1Q,
+	}
+	dot1q := &layers.Dot1Q{
+		VLANIdentifier: 100,
+		Priority:       0,
+		Type:           layers.EthernetTypeIPv4,
+	}
+	ip := &layers.IPv4{
+		Version:  4,
+		IHL:      5,
+		TTL:      64,
+		Protocol: proto,
+		SrcIP:    net.IP{10, 0, 100, 50},
+		DstIP:    net.IP{10, 0, 100, 1},
+	}
+	switch v := l4.(type) {
+	case *layers.TCP:
+		if err := v.SetNetworkLayerForChecksum(ip); err != nil {
+			t.Fatal(err)
+		}
+	case *layers.UDP:
+		if err := v.SetNetworkLayerForChecksum(ip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	var err error
+	if len(payload) > 0 {
+		err = gopacket.SerializeLayers(buf, opts, eth, dot1q, ip, l4, gopacket.Payload(payload))
+	} else {
+		err = gopacket.SerializeLayers(buf, opts, eth, dot1q, ip, l4)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
+}
+
 func TestNextPacket_SyntheticFrames(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -116,6 +198,48 @@ func TestNextPacket_SyntheticFrames(t *testing.T) {
 			wantSrcIP:   "192.168.1.100",
 			wantDropped: false,
 		},
+		{
+			name: "IPv6 UDP datagram with syslog payload",
+			pkt: buildIPv6Frame(t, &layers.UDP{
+				SrcPort: 54321,
+				DstPort: 514,
+			}, []byte("<165>IPv6 syslog"), layers.IPProtocolUDP),
+			wantPayload: "<165>IPv6 syslog",
+			wantSrcIP:   "2001:db8::42",
+			wantDropped: false,
+		},
+		{
+			name: "IPv6 TCP pure ACK (no payload)",
+			pkt: buildIPv6Frame(t, &layers.TCP{
+				SrcPort: 514,
+				DstPort: 54321,
+				ACK:     true,
+				Seq:     1000,
+				Ack:     2000,
+			}, nil, layers.IPProtocolTCP),
+			wantDropped: true,
+		},
+		{
+			name: "802.1Q VLAN tagged UDP syslog frame",
+			pkt: buildVLANFrame(t, &layers.UDP{
+				SrcPort: 54321,
+				DstPort: 514,
+			}, []byte("<13>VLAN syslog"), layers.IPProtocolUDP),
+			wantPayload: "<13>VLAN syslog",
+			wantSrcIP:   "10.0.100.50",
+			wantDropped: false,
+		},
+		{
+			name: "802.1Q VLAN tagged TCP pure ACK frame (no payload)",
+			pkt: buildVLANFrame(t, &layers.TCP{
+				SrcPort: 514,
+				DstPort: 54321,
+				ACK:     true,
+				Seq:     1000,
+				Ack:     2000,
+			}, nil, layers.IPProtocolTCP),
+			wantDropped: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -143,6 +267,19 @@ func TestNextPacket_SyntheticFrames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNextPacket_ChannelClosed(t *testing.T) {
+	ch := make(chan gopacket.Packet, 1)
+	close(ch)
+	source := &PcapPacketSource{packets: ch}
+	pd, err := source.NextPacket()
+	if err == nil {
+		t.Fatalf("expected error on closed channel, got nil (pd=%+v)", pd)
+	}
+	if err != os.ErrDeadlineExceeded && err.Error() != "capture closed" && err.Error() != "EOF" {
+		t.Logf("got error: %v", err)
 	}
 }
 
