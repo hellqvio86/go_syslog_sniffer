@@ -125,7 +125,7 @@ This replaces my earlier review, which was written against the old single-file `
 - Stutter: `stats.StatsTracker`, `syslog.SyslogPacket`, `syslog.ParseSyslogPacket`, `stats.JsonSummary` → `stats.Tracker`, `syslog.Message`, `syslog.Parse`, `JSONSummary`.
 - `interface{}` → `any`; `err == flag.ErrHelp` in `main` → `errors.Is`; `PacketData.SrcIP string` → `netip.Addr` (avoids a string allocation per packet).
 
-### [ ] R4. `StatsTracker` snapshot is not atomic
+### [x] R4. `StatsTracker` snapshot is not atomic
 - Periodic mode calls `GetSummary` then `Clear` as two lock acquisitions. Safe today (single goroutine), a trap once a ticker goroutine or HTTP endpoint exists. Add `SnapshotAndReset(interval)` that swaps the map under one lock.
 
 ### [ ] R5. Periodic output is not machine-friendly

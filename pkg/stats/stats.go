@@ -190,6 +190,45 @@ func (st *StatsTracker) Clear() {
 	st.captureStats = nil
 }
 
+// SnapshotAndReset atomically returns a snapshot of the current stats and resets the tracked state under a single lock.
+func (st *StatsTracker) SnapshotAndReset(intervalSeconds uint64) JsonSummary {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	hostsCopy := make(map[string]HostStats, len(st.stats))
+	for k, v := range st.stats {
+		hostsCopy[k] = HostStats{
+			Count:           v.Count,
+			SrcIP:           v.SrcIP,
+			Hostname:        v.Hostname,
+			Sample:          v.Sample,
+			SampleTruncated: v.SampleTruncated,
+			TLSSuspected:    v.TLSSuspected,
+		}
+	}
+
+	var csCopy *CaptureStats
+	if st.captureStats != nil {
+		c := *st.captureStats
+		csCopy = &c
+	}
+
+	summary := JsonSummary{
+		IntervalSeconds: intervalSeconds,
+		Hosts:           hostsCopy,
+		OverflowEvents:  st.overflowEvents,
+		Ignored:         st.ignored,
+		CaptureStats:    csCopy,
+	}
+
+	st.stats = make(map[string]*HostStats)
+	st.overflowEvents = 0
+	st.ignored = IgnoredCounters{}
+	st.captureStats = nil
+
+	return summary
+}
+
 // GetSummary returns a snapshot of the current stats.
 func (st *StatsTracker) GetSummary(intervalSeconds uint64) JsonSummary {
 	st.mu.RLock()

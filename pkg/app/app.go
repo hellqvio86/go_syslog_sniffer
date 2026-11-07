@@ -70,11 +70,10 @@ func RunSniffer(
 							cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
 					}
 				}
-				summary := statsTracker.GetSummary(cfg.Frequency)
+				summary := statsTracker.SnapshotAndReset(cfg.Frequency)
 				if err := writeJSONPretty(stdout, summary); err != nil {
 					return err
 				}
-				statsTracker.Clear()
 			}
 			lastReportTime = time.Now()
 		}

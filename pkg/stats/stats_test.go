@@ -242,3 +242,77 @@ func TestStatsTracker_S4CaptureStats(t *testing.T) {
 		t.Errorf("expected CaptureStats to be cleared, got %+v", sum3.CaptureStats)
 	}
 }
+
+func TestStatsTracker_SnapshotAndReset(t *testing.T) {
+	st := NewStatsTracker()
+	st.AddEntry("10.0.0.1", "host1", "msg1")
+	st.AddEntry("10.0.0.2", "host2", "msg2")
+
+	snap := st.SnapshotAndReset(5)
+	if snap.IntervalSeconds != 5 {
+		t.Errorf("expected interval 5, got %d", snap.IntervalSeconds)
+	}
+	if len(snap.Hosts) != 2 {
+		t.Errorf("expected 2 hosts in snapshot, got %d", len(snap.Hosts))
+	}
+	if !st.IsEmpty() {
+		t.Errorf("expected tracker to be empty after SnapshotAndReset")
+	}
+
+	// Concurrent writes with periodic SnapshotAndReset
+	var totalAdded uint64
+	var totalSnapshotted uint64
+	var mu sync.Mutex
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		workerID := i
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				st.AddEntry(fmt.Sprintf("10.1.%d.%d", workerID, j), "host", "msg")
+				mu.Lock()
+				totalAdded++
+				mu.Unlock()
+			}
+		}()
+	}
+
+	// Goroutine doing snapshots concurrently
+	done := make(chan struct{})
+	var snapWg sync.WaitGroup
+	snapWg.Add(1)
+	go func() {
+		defer snapWg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				s := st.SnapshotAndReset(1)
+				var count uint64
+				for _, h := range s.Hosts {
+					count += h.Count
+				}
+				mu.Lock()
+				totalSnapshotted += count
+				mu.Unlock()
+			}
+		}
+	}()
+
+	wg.Wait()
+	close(done)
+	snapWg.Wait()
+
+	// Final snapshot
+	finalSnap := st.SnapshotAndReset(1)
+	for _, h := range finalSnap.Hosts {
+		totalSnapshotted += h.Count
+	}
+
+	if totalSnapshotted != totalAdded {
+		t.Errorf("expected totalSnapshotted (%d) == totalAdded (%d)", totalSnapshotted, totalAdded)
+	}
+}
