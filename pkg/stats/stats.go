@@ -4,13 +4,21 @@ import (
 	"sync"
 )
 
-// HostStats contains the packet count, IP, claimed hostname, and sample message.
+// IgnoredCounters tracks counters for packets that were seen and ignored.
+type IgnoredCounters struct {
+	NoPayload        uint64 `json:"no_payload,omitempty"`
+	NotSyslog        uint64 `json:"not_syslog,omitempty"`
+	NonUTF8Sanitized uint64 `json:"non_utf8_sanitized,omitempty"`
+}
+
+// HostStats contains the packet count, IP, claimed hostname, sample message, and security flags.
 type HostStats struct {
 	Count           uint64 `json:"count"`
 	SrcIP           string `json:"src_ip"`
 	Hostname        string `json:"hostname,omitempty"`
-	Sample          string `json:"sample"`
+	Sample          string `json:"sample,omitempty"`
 	SampleTruncated bool   `json:"sample_truncated,omitempty"`
+	TLSSuspected    bool   `json:"tls_suspected,omitempty"`
 }
 
 // JsonSummary represents the serialized JSON report.
@@ -18,6 +26,7 @@ type JsonSummary struct {
 	IntervalSeconds uint64               `json:"interval_seconds"`
 	Hosts           map[string]HostStats `json:"hosts"`
 	OverflowEvents  uint64               `json:"overflow_events,omitempty"`
+	Ignored         IgnoredCounters      `json:"ignored,omitempty"`
 }
 
 // StatsTracker tracks packet counts and samples thread-safely.
@@ -27,6 +36,7 @@ type StatsTracker struct {
 	maxHosts       int
 	sampleBytes    int
 	overflowEvents uint64
+	ignored        IgnoredCounters
 }
 
 // NewStatsTracker creates a StatsTracker with default limits (10000 max hosts, 2048 sample bytes).
@@ -93,6 +103,45 @@ func (st *StatsTracker) AddEntry(srcIP string, hostname string, message string) 
 	}
 }
 
+// RecordIgnoredNoPayload records a packet frame that contained no application payload.
+func (st *StatsTracker) RecordIgnoredNoPayload() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.ignored.NoPayload++
+}
+
+// RecordIgnoredNotSyslog records a payload that was not recognized as syslog.
+func (st *StatsTracker) RecordIgnoredNotSyslog() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.ignored.NotSyslog++
+}
+
+// RecordNonUTF8Sanitized records an event where non-UTF8 bytes were sanitized to U+FFFD.
+func (st *StatsTracker) RecordNonUTF8Sanitized() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.ignored.NonUTF8Sanitized++
+}
+
+// RecordTLS marks that TLS handshake data (e.g. ClientHello) was detected from the given source IP.
+func (st *StatsTracker) RecordTLS(srcIP string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	key := srcIP
+	if key == "" {
+		key = "unknown"
+	}
+	if entry, exists := st.stats[key]; exists {
+		entry.TLSSuspected = true
+	} else if len(st.stats) < st.maxHosts {
+		st.stats[key] = &HostStats{
+			SrcIP:        srcIP,
+			TLSSuspected: true,
+		}
+	}
+}
+
 // IsEmpty reports whether any hosts have been tracked.
 func (st *StatsTracker) IsEmpty() bool {
 	st.mu.RLock()
@@ -106,6 +155,7 @@ func (st *StatsTracker) Clear() {
 	defer st.mu.Unlock()
 	st.stats = make(map[string]*HostStats)
 	st.overflowEvents = 0
+	st.ignored = IgnoredCounters{}
 }
 
 // GetSummary returns a snapshot of the current stats.
@@ -121,6 +171,7 @@ func (st *StatsTracker) GetSummary(intervalSeconds uint64) JsonSummary {
 			Hostname:        v.Hostname,
 			Sample:          v.Sample,
 			SampleTruncated: v.SampleTruncated,
+			TLSSuspected:    v.TLSSuspected,
 		}
 	}
 
@@ -128,5 +179,6 @@ func (st *StatsTracker) GetSummary(intervalSeconds uint64) JsonSummary {
 		IntervalSeconds: intervalSeconds,
 		Hosts:           hostsCopy,
 		OverflowEvents:  st.overflowEvents,
+		Ignored:         st.ignored,
 	}
 }

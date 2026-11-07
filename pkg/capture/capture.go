@@ -22,8 +22,9 @@ const (
 
 // PacketData contains the payload bytes and source IP extracted from a captured packet.
 type PacketData struct {
-	Data  []byte
-	SrcIP string
+	Data      []byte
+	SrcIP     string
+	NoPayload bool
 }
 
 // PacketSource defines the interface for consuming captured network packets.
@@ -129,7 +130,10 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 			payload = appLayer.Payload()
 		}
 		if len(payload) == 0 {
-			return nil, nil
+			return &PacketData{
+				SrcIP:     srcIP,
+				NoPayload: true,
+			}, nil
 		}
 
 		return &PacketData{

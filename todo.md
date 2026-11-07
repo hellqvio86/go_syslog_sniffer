@@ -94,7 +94,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** On `Close()`/end of run read `handle.Stats()` and report `capture_stats {received, dropped, if_dropped}` (stderr in debug mode, and as an optional JSON object). For busy collectors use `pcap.NewInactiveHandle` + `SetBufferSize` before `Activate`.
 - **Acceptance:** stats appear in debug output; documented in README as "counts are lower bounds when drops > 0".
 
-### [ ] S5. Silent ignoring and protocol limitations
+### [x] S5. Silent ignoring and protocol limitations
 - **Problem:**
   - TCP is handled per segment (no reassembly): several newline-framed messages in one segment count as 1; a message split across segments yields junk samples.
   - TLS syslog (usually 6514) is encrypted; after B1 it will be rejected with no hint to the user.

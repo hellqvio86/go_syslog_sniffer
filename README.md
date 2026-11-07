@@ -79,9 +79,20 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
       "hostname": "mymachine.example.com",
       "sample": "<165>1 2026-11-07T12:00:00.000Z mymachine.example.com appname[123] - ID47 [exampleSDID@32473] Sample log entry"
     }
+  },
+  "ignored": {
+    "no_payload": 5,
+    "not_syslog": 2
   }
 }
 ```
+
+## Protocol Considerations & Limitations
+
+- **Multi-Message TCP Streams**: Newline-framed syslog messages arriving within a single TCP segment are split and counted individually.
+- **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be inspected. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
+- **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams) and non-syslog payloads are tracked in the top-level `ignored` section.
+- **UDP Fragmentation**: Large UDP syslog datagrams exceeding network MTU that undergo IP fragmentation only match port filters on the first fragment.
 
 ## Docker
 

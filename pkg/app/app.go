@@ -93,22 +93,45 @@ func RunSniffer(
 			continue
 		}
 
+		if packet.NoPayload {
+			statsTracker.RecordIgnoredNoPayload()
+			continue
+		}
+
 		if cfg.Debug {
 			fmt.Fprintf(stderr, "DEBUG: Received packet: len=%d\n", len(packet.Data))
 		}
 
-		syslogMsg, err := syslog.ParseSyslogPacket(packet.Data)
-		if err != nil || syslogMsg == nil {
-			if cfg.Debug && err != nil {
-				fmt.Fprintf(stderr, "DEBUG: Ignored packet: %v\n", err)
+		// Detect TLS ClientHello / TLS record
+		if len(packet.Data) >= 2 && packet.Data[0] == 0x16 && packet.Data[1] == 0x03 {
+			statsTracker.RecordTLS(packet.SrcIP)
+			statsTracker.RecordIgnoredNotSyslog()
+			if cfg.Debug {
+				fmt.Fprintf(stderr, "DEBUG: Suspected TLS traffic from %s (ignoring)\n", packet.SrcIP)
 			}
 			continue
 		}
 
-		statsTracker.AddEntry(packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+		messages := syslog.SplitMessages(packet.Data)
+		for _, msgBytes := range messages {
+			syslogMsg, err := syslog.ParseSyslogPacket(msgBytes)
+			if err != nil || syslogMsg == nil {
+				statsTracker.RecordIgnoredNotSyslog()
+				if cfg.Debug && err != nil {
+					fmt.Fprintf(stderr, "DEBUG: Ignored packet: %v\n", err)
+				}
+				continue
+			}
 
-		if cfg.Debug {
-			fmt.Fprintf(stderr, "DEBUG: Captured from %s (claimed=%s): %s\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+			if syslogMsg.WasSanitized {
+				statsTracker.RecordNonUTF8Sanitized()
+			}
+
+			statsTracker.AddEntry(packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+
+			if cfg.Debug {
+				fmt.Fprintf(stderr, "DEBUG: Captured from %s (claimed=%s): %s\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+			}
 		}
 	}
 

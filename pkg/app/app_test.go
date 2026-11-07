@@ -290,3 +290,82 @@ func TestRunSniffer_PeriodicMultipleReports(t *testing.T) {
 		t.Errorf("expected at least 3 periodic reports, got %d. Output:\n%s", reportCount, stdout.String())
 	}
 }
+
+func TestRunSniffer_MultiMessageTCPSegment(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+	}
+
+	// Single TCP segment containing 3 newline-separated syslog messages
+	multiPayload := []byte("<13>Oct 11 22:14:15 host1 msg1\n<13>Oct 11 22:14:16 host1 msg2\n<13>Oct 11 22:14:17 host1 msg3\n")
+	packets := []*capture.PacketData{
+		{
+			Data:  multiPayload,
+			SrcIP: "10.0.0.1",
+		},
+	}
+
+	mockSource := capture.NewMockPacketSource(packets)
+	mockSource.ReturnEOFOnExhaust = true
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	_ = RunSniffer(context.Background(), cfg, mockSource, &stdout, &stderr)
+
+	var summary stats.JsonSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal stdout: %v", err)
+	}
+
+	entry, ok := summary.Hosts["10.0.0.1"]
+	if !ok {
+		t.Fatalf("expected host 10.0.0.1, got: %+v", summary.Hosts)
+	}
+	if entry.Count != 3 {
+		t.Errorf("expected count 3 for multi-message segment, got %d", entry.Count)
+	}
+}
+
+func TestRunSniffer_TLSDetected(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      6514,
+		Interval:  1,
+	}
+
+	// Simulated TLS ClientHello: 0x16 0x03 0x01 ...
+	tlsPayload := []byte{0x16, 0x03, 0x01, 0x00, 0x50, 0x01, 0x00, 0x00}
+	packets := []*capture.PacketData{
+		{
+			Data:  tlsPayload,
+			SrcIP: "10.0.0.2",
+		},
+	}
+
+	mockSource := capture.NewMockPacketSource(packets)
+	mockSource.ReturnEOFOnExhaust = true
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	_ = RunSniffer(context.Background(), cfg, mockSource, &stdout, &stderr)
+
+	var summary stats.JsonSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal stdout: %v", err)
+	}
+
+	entry, ok := summary.Hosts["10.0.0.2"]
+	if !ok {
+		t.Fatalf("expected host 10.0.0.2 in summary, got: %+v", summary.Hosts)
+	}
+	if !entry.TLSSuspected {
+		t.Errorf("expected tls_suspected=true for TLS traffic")
+	}
+	if summary.Ignored.NotSyslog != 1 {
+		t.Errorf("expected ignored.not_syslog=1, got %d", summary.Ignored.NotSyslog)
+	}
+}

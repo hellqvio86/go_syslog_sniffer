@@ -124,8 +124,8 @@ func TestNextPacket_SyntheticFrames(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if tc.wantDropped {
-				if pd != nil {
-					t.Fatalf("expected packet to be dropped (nil), got %+v (data=%q)", pd, string(pd.Data))
+				if pd != nil && !pd.NoPayload {
+					t.Fatalf("expected packet to be dropped (no payload), got %+v (data=%q)", pd, string(pd.Data))
 				}
 			} else {
 				if pd == nil {
@@ -312,7 +312,7 @@ func TestNextPacket_TCPHandshakeAndData(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error at packet %d: %v", i, err)
 		}
-		if pd != nil {
+		if pd != nil && !pd.NoPayload {
 			received = append(received, pd)
 		}
 	}

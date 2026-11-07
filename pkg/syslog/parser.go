@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -54,8 +55,28 @@ func cleanHostname(raw string) string {
 
 // SyslogPacket represents a parsed syslog packet.
 type SyslogPacket struct {
-	Message  string
-	Hostname string
+	Message      string
+	Hostname     string
+	WasSanitized bool
+}
+
+// SplitMessages splits newline-delimited syslog messages into separate byte slices.
+func SplitMessages(data []byte) [][]byte {
+	if !bytes.Contains(data, []byte("\n")) {
+		return [][]byte{data}
+	}
+	var res [][]byte
+	lines := bytes.Split(data, []byte("\n"))
+	for _, l := range lines {
+		trimmed := bytes.TrimSpace(l)
+		if len(trimmed) > 0 {
+			res = append(res, trimmed)
+		}
+	}
+	if len(res) == 0 {
+		return [][]byte{data}
+	}
+	return res
 }
 
 // ParseSyslogPacket attempts to parse raw packet bytes into a SyslogPacket.
@@ -85,7 +106,7 @@ func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
 		}
 	}
 
-	// Sanitize sample to valid UTF-8 so non-UTF8 syslog is never dropped
+	wasSanitized := !utf8.Valid(payloadBytes)
 	msg := strings.ToValidUTF8(string(payloadBytes), "\uFFFD")
 	var hostname string
 
@@ -98,7 +119,8 @@ func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
 	}
 
 	return &SyslogPacket{
-		Message:  msg,
-		Hostname: hostname,
+		Message:      msg,
+		Hostname:     hostname,
+		WasSanitized: wasSanitized,
 	}, nil
 }
