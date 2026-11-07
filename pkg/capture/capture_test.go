@@ -2,10 +2,12 @@ package capture
 
 import (
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
 )
 
 func buildFrame(t *testing.T, l4 gopacket.SerializableLayer, payload []byte, proto layers.IPProtocol) gopacket.Packet {
@@ -178,6 +180,12 @@ func TestNewPcapPacketSource_InvalidInterface(t *testing.T) {
 	_, err := NewPcapPacketSource("non_existent_device_xyz123", 514)
 	if err == nil {
 		t.Fatal("expected error opening non-existent interface, got nil")
+	}
+	devs, findErr := pcap.FindAllDevs()
+	if findErr == nil && len(devs) > 0 {
+		if !strings.Contains(err.Error(), "available interfaces:") {
+			t.Errorf("expected error message to contain available interfaces list, got: %v", err)
+		}
 	}
 }
 

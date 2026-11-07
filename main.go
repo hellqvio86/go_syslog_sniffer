@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/google/gopacket/pcap"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/app"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
@@ -25,6 +26,23 @@ func main() {
 
 	if cfg.ShowVersion {
 		fmt.Printf("syslog_sniffer %s\n", config.Version)
+		os.Exit(0)
+	}
+
+	if cfg.ListInterfaces {
+		devs, err := pcap.FindAllDevs()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing interfaces: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Available network interfaces:")
+		for _, dev := range devs {
+			if dev.Description != "" {
+				fmt.Printf("  - %s (%s)\n", dev.Name, dev.Description)
+			} else {
+				fmt.Printf("  - %s\n", dev.Name)
+			}
+		}
 		os.Exit(0)
 	}
 

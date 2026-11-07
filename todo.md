@@ -83,7 +83,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** Detect explicitly-set flags with `fs.Visit`; define `-t 0` = unlimited; make periodic default to unlimited; validate upper bounds (`≤ 1<<31` seconds or use `time.Duration` with overflow check).
 - **Acceptance:** config tests for explicit 0, unset, huge values; app test showing periodic mode emits ≥ 3 reports with a mock source and a fake clock.
 
-### [ ] S3. Config validation and the `eth0` default
+### [x] S3. Config validation and the `eth0` default
 - **Where:** `config.ParseArgs`.
 - **Problem:** `-p 70000` or `-p -5` fail later as an opaque BPF error. The default interface `eth0` doesn't exist on most modern Linux hosts (predictable names like `enp3s0`) and in many containers, so the zero-argument run fails with `failed to open interface eth0`.
 - **Fix:** Validate port 1–65535 in `ParseArgs`. Default to `any` on Linux (supported by libpcap) or, on failure to open, list candidates via `pcap.FindAllDevs()` in the error message. Add `--list-interfaces`.

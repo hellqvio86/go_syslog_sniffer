@@ -12,15 +12,16 @@ var Version = "0.2.0"
 
 // Config holds the runtime configuration parameters for syslog_sniffer.
 type Config struct {
-	Interface   string
-	Port        int
-	Debug       bool
-	Interval    uint64
-	Periodic    bool
-	Frequency   uint64
-	ShowVersion bool
-	MaxHosts    int
-	SampleBytes int
+	Interface      string
+	Port           int
+	Debug          bool
+	Interval       uint64
+	Periodic       bool
+	Frequency      uint64
+	ShowVersion    bool
+	MaxHosts       int
+	SampleBytes    int
+	ListInterfaces bool
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -43,6 +44,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		versionShort, versionLong   bool
 		maxHosts                    int
 		sampleBytes                 int
+		listInterfaces              bool
 	)
 
 	// Short flags
@@ -62,21 +64,34 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.BoolVar(&versionLong, "version", false, "Print version and exit")
 	fs.IntVar(&maxHosts, "max-hosts", 10000, "Maximum number of distinct hosts to track in memory (default 10000)")
 	fs.IntVar(&sampleBytes, "sample-bytes", 2048, "Maximum byte length of message sample retained per host (default 2048)")
+	fs.BoolVar(&listInterfaces, "list-interfaces", false, "List available network interfaces and exit")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
 	}
 
+	if listInterfaces {
+		return &Config{
+			ListInterfaces: true,
+		}, nil
+	}
+
 	// Check which flags were explicitly passed
-	var intervalSet bool
+	var (
+		intervalSet bool
+		portSet     bool
+	)
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "t" || f.Name == "interval" {
 			intervalSet = true
 		}
+		if f.Name == "p" || f.Name == "port" {
+			portSet = true
+		}
 	})
 
-	// Resolve interface
-	selectedInterface := "eth0"
+	// Resolve interface (defaults to "any" on Linux)
+	selectedInterface := "any"
 	if intfLong != "" {
 		selectedInterface = intfLong
 	} else if intfShort != "" {
@@ -85,10 +100,16 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 
 	// Resolve port
 	selectedPort := 514
-	if portLong != 0 {
-		selectedPort = portLong
-	} else if portShort != 0 {
-		selectedPort = portShort
+	if portSet {
+		if portLong != 0 || (portShort == 0 && portLong != 0) {
+			selectedPort = portLong
+		} else {
+			selectedPort = portShort
+		}
+	}
+
+	if selectedPort < 1 || selectedPort > 65535 {
+		return nil, fmt.Errorf("port must be between 1 and 65535, got %d", selectedPort)
 	}
 
 	const maxAllowedDuration = 1 << 31
@@ -133,14 +154,15 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	}
 
 	return &Config{
-		Interface:   selectedInterface,
-		Port:        selectedPort,
-		Debug:       selectedDebug,
-		Interval:    selectedInterval,
-		Periodic:    periodic,
-		Frequency:   frequency,
-		ShowVersion: versionShort || versionLong,
-		MaxHosts:    maxHosts,
-		SampleBytes: sampleBytes,
+		Interface:      selectedInterface,
+		Port:           selectedPort,
+		Debug:          selectedDebug,
+		Interval:       selectedInterval,
+		Periodic:       periodic,
+		Frequency:      frequency,
+		ShowVersion:    versionShort || versionLong,
+		MaxHosts:       maxHosts,
+		SampleBytes:    sampleBytes,
+		ListInterfaces: listInterfaces,
 	}, nil
 }

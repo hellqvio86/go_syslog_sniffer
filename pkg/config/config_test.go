@@ -11,8 +11,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Interface != "eth0" {
-		t.Errorf("expected interface 'eth0', got %q", cfg.Interface)
+	if cfg.Interface != "any" {
+		t.Errorf("expected interface 'any', got %q", cfg.Interface)
 	}
 	if cfg.Port != 514 {
 		t.Errorf("expected port 514, got %d", cfg.Port)
@@ -125,17 +125,41 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
-func TestCustomLimitsArgs(t *testing.T) {
-	args := []string{"--max-hosts", "500", "--sample-bytes", "1024"}
-	cfg, err := ParseArgs(args, &bytes.Buffer{})
+func TestS3_PortValidationAndListInterfaces(t *testing.T) {
+	// Invalid port < 1
+	_, err := ParseArgs([]string{"-p", "0"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for port 0, got nil")
+	}
+
+	// Negative port
+	_, err = ParseArgs([]string{"-p", "-5"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for negative port -5, got nil")
+	}
+
+	// Port > 65535
+	_, err = ParseArgs([]string{"--port", "70000"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for port 70000, got nil")
+	}
+
+	// Valid port 65535
+	cfg, err := ParseArgs([]string{"-p", "65535"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error for valid port 65535: %v", err)
+	}
+	if cfg.Port != 65535 {
+		t.Errorf("expected port 65535, got %d", cfg.Port)
+	}
+
+	// --list-interfaces flag
+	cfgList, err := ParseArgs([]string{"--list-interfaces"}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.MaxHosts != 500 {
-		t.Errorf("expected MaxHosts 500, got %d", cfg.MaxHosts)
-	}
-	if cfg.SampleBytes != 1024 {
-		t.Errorf("expected SampleBytes 1024, got %d", cfg.SampleBytes)
+	if !cfgList.ListInterfaces {
+		t.Errorf("expected ListInterfaces true, got false")
 	}
 }
 

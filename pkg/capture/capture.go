@@ -74,6 +74,16 @@ func NewPcapPacketSource(intf string, port int) (*PcapPacketSource, error) {
 func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (*PcapPacketSource, error) {
 	handle, err := pcap.OpenLive(intf, defaultSnapLen, true, readTimeout)
 	if err != nil {
+		devs, findErr := pcap.FindAllDevs()
+		var candidateNames []string
+		if findErr == nil {
+			for _, d := range devs {
+				candidateNames = append(candidateNames, d.Name)
+			}
+		}
+		if len(candidateNames) > 0 {
+			return nil, fmt.Errorf("failed to open interface %s: %w (available interfaces: %s)", intf, err, strings.Join(candidateNames, ", "))
+		}
 		return nil, fmt.Errorf("failed to open interface %s: %w", intf, err)
 	}
 
