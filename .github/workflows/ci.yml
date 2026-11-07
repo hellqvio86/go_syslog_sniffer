@@ -2,8 +2,7 @@
 name: CI/CD
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 'on':
   push:
@@ -18,14 +17,14 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -53,20 +52,13 @@ jobs:
       - name: Generate coverage
         run: make coverage
 
-      - name: Generate coverage badge
-        if: github.ref == 'refs/heads/main'
-        run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
-          echo "Coverage: $COVERAGE%"
-          COLOR=$(awk -v val="$COVERAGE" 'BEGIN { if (val >= 80) print "brightgreen"; else if (val >= 70) print "green"; else if (val >= 50) print "yellow"; else print "red" }')
-          curl -s "https://img.shields.io/badge/coverage-${COVERAGE}%25-${COLOR}" > coverage.svg
-
-      - name: Commit coverage badge
-        if: github.ref == 'refs/heads/main'
-        uses: stefanzweifel/git-auto-commit-action@v7
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          commit_message: "chore: update coverage badge"
-          file_pattern: coverage.svg
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
 
   docker-build-and-test:
     name: Build and Test Docker Image
@@ -77,10 +69,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build Docker image for testing
         run: |
@@ -115,13 +107,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Extract version
         id: version
@@ -158,7 +150,7 @@ jobs:
           ls -la dist/
 
       - name: Upload Binary Artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-artifacts
           path: dist/*
@@ -176,7 +168,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -205,14 +197,14 @@ jobs:
 
       - name: Download release artifacts
         if: steps.version.outputs.changed == 'true' || github.event_name == 'release'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-artifacts
           path: release_assets
 
       - name: Create or update draft release
         if: steps.version.outputs.changed == 'true' || github.event_name == 'release'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: "v${{ steps.version.outputs.version }}"
           name: "Release v${{ steps.version.outputs.version }}"
@@ -234,7 +226,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Extract version
         id: version
@@ -243,13 +235,13 @@ jobs:
           echo "version=$file_version" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -257,7 +249,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: |
             ghcr.io/${{ github.repository }}
@@ -271,7 +263,7 @@ jobs:
             type=sha,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'release' && needs.draft-release.outputs.version_changed != 'true' }}
 
       - name: Build and push multi-arch Docker image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile

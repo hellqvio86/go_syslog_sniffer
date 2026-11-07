@@ -160,7 +160,7 @@ This replaces my earlier review, which was written against the old single-file `
 ### [x] C2. Two dependency bots on the same repo
 - Both `.github/dependabot.yml` (gomod, weekly) and `renovate.json` (+ `bin/renovate/run.sh`) are active; git history shows PRs from both (for example the `golang.org/x/net` bump). Pick one (Renovate also covers Actions and Docker). In `run.sh` stop using `ghcr.io/renovatebot/renovate:latest`; pin it. Enable `pinDigests` for Actions and Docker base images.
 
-### [ ] C3. Workflow hardening
+### [x] C3. Workflow hardening
 - Top-level `permissions: contents: write, packages: write` is the default for every job; set top-level `contents: read` and grant per job (several jobs already override).
 - Actions are pinned by major tag, not commit SHA. For a security tool, pin by SHA (Renovate can maintain them).
 - `build-and-test` commits `coverage.svg` back to `main` via `git-auto-commit-action`, creating bot commits and requiring write access to the default branch (breaks with branch protection). Prefer Codecov, a gist badge, or generating the badge at release time.
