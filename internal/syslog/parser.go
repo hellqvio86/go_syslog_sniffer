@@ -53,12 +53,15 @@ func cleanHostname(raw string) string {
 	return raw
 }
 
-// SyslogPacket represents a parsed syslog packet.
-type SyslogPacket struct {
+// Message represents a parsed syslog message.
+type Message struct {
 	Message      string
 	Hostname     string
 	WasSanitized bool
 }
+
+// SyslogPacket is an alias for Message for backwards compatibility.
+type SyslogPacket = Message
 
 // SplitMessages splits newline-delimited syslog messages into separate byte slices.
 func SplitMessages(data []byte) [][]byte {
@@ -79,10 +82,10 @@ func SplitMessages(data []byte) [][]byte {
 	return res
 }
 
-// ParseSyslogPacket attempts to parse raw packet bytes into a SyslogPacket.
+// Parse attempts to parse raw packet bytes into a Message.
 // It requires the message to start with <PRI> where PRI <= 191, optionally preceded by
 // an RFC 6587 octet count prefix.
-func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
+func Parse(data []byte) (*Message, error) {
 	if len(data) == 0 {
 		return nil, ErrEmpty
 	}
@@ -118,9 +121,14 @@ func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
 		hostname = cleanHostname(matches[3])
 	}
 
-	return &SyslogPacket{
+	return &Message{
 		Message:      msg,
 		Hostname:     hostname,
 		WasSanitized: wasSanitized,
 	}, nil
+}
+
+// ParseSyslogPacket is an alias for Parse.
+func ParseSyslogPacket(data []byte) (*Message, error) {
+	return Parse(data)
 }

@@ -138,8 +138,8 @@ func TestNextPacket_SyntheticFrames(t *testing.T) {
 				if string(pd.Data) != tc.wantPayload {
 					t.Errorf("payload mismatch: got %q, want %q", string(pd.Data), tc.wantPayload)
 				}
-				if pd.SrcIP != tc.wantSrcIP {
-					t.Errorf("srcIP mismatch: got %q, want %q", pd.SrcIP, tc.wantSrcIP)
+				if pd.SrcIP.String() != tc.wantSrcIP {
+					t.Errorf("srcIP mismatch: got %q, want %q", pd.SrcIP.String(), tc.wantSrcIP)
 				}
 			}
 		})
@@ -291,8 +291,8 @@ func TestNextPacket_TCPHandshakeAndData(t *testing.T) {
 	if len(received) != 1 {
 		t.Fatalf("expected exactly 1 packet received, got %d", len(received))
 	}
-	if received[0].SrcIP != clientIP.String() {
-		t.Errorf("expected SrcIP %q, got %q", clientIP.String(), received[0].SrcIP)
+	if received[0].SrcIP.String() != clientIP.String() {
+		t.Errorf("expected SrcIP %q, got %q", clientIP.String(), received[0].SrcIP.String())
 	}
 	if string(received[0].Data) != "<13>Hello from client" {
 		t.Errorf("expected payload '<13>Hello from client', got %q", string(received[0].Data))
@@ -365,8 +365,8 @@ func TestNewOfflinePacketSource(t *testing.T) {
 	if string(pd.Data) != "<13>Oct 11 22:14:15 host app: offline test" {
 		t.Errorf("unexpected offline packet payload: %q", string(pd.Data))
 	}
-	if pd.SrcIP != "192.168.1.100" {
-		t.Errorf("unexpected offline packet src ip: %q", pd.SrcIP)
+	if pd.SrcIP.String() != "192.168.1.100" {
+		t.Errorf("unexpected offline packet src ip: %q", pd.SrcIP.String())
 	}
 
 	// Next packet should return io.EOF (channel closed on file end)

@@ -16,7 +16,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the Go application
-	go build -ldflags="-s -w -X github.com/hellqvio86/go_syslog_sniffer/pkg/config.Version=$(VERSION)" -o $(BINARY_NAME) main.go
+	go build -ldflags="-s -w -X github.com/hellqvio86/go_syslog_sniffer/internal/config.Version=$(VERSION)" -o $(BINARY_NAME) main.go
 	ln -sf $(BINARY_NAME) $(LEGACY_NAME)
 
 $(LEGACY_NAME): build
@@ -43,7 +43,7 @@ lint: ## Run linter and static analysis
 	fi
 
 coverage: ## Generate test coverage report
-	go test -coverprofile=coverage.out ./pkg/...
+	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | grep total | awk '{print "Total coverage: " $$3}'
 

@@ -10,9 +10,9 @@ import (
 	"syscall"
 
 	"github.com/google/gopacket/pcap"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/app"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/app"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/config"
 )
 
 func main() {

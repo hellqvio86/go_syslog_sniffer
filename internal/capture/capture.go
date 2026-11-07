@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ type Stats struct {
 // PacketData contains the payload bytes and source IP extracted from a captured packet.
 type PacketData struct {
 	Data      []byte
-	SrcIP     string
+	SrcIP     netip.Addr
 	NoPayload bool
 }
 
@@ -161,14 +162,18 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 			return nil, nil
 		}
 
-		var srcIP string
+		var srcIP netip.Addr
 		if ipLayer := pkt.Layer(layers.LayerTypeIPv4); ipLayer != nil {
 			if ip, ok := ipLayer.(*layers.IPv4); ok {
-				srcIP = ip.SrcIP.String()
+				if addr, ok := netip.AddrFromSlice(ip.SrcIP); ok {
+					srcIP = addr.Unmap()
+				}
 			}
 		} else if ip6Layer := pkt.Layer(layers.LayerTypeIPv6); ip6Layer != nil {
 			if ip6, ok := ip6Layer.(*layers.IPv6); ok {
-				srcIP = ip6.SrcIP.String()
+				if addr, ok := netip.AddrFromSlice(ip6.SrcIP); ok {
+					srcIP = addr.Unmap()
+				}
 			}
 		}
 

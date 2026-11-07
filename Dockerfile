@@ -21,7 +21,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=1 go build -ldflags="-s -w -X github.com/hellqvio86/go_syslog_sniffer/pkg/config.Version=${VERSION}" -o syslog_sniffer main.go
+RUN CGO_ENABLED=1 go build -ldflags="-s -w -X github.com/hellqvio86/go_syslog_sniffer/internal/config.Version=${VERSION}" -o syslog_sniffer main.go
 
 # Artifacts export stage (for clean host extraction)
 FROM scratch AS artifacts

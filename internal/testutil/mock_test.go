@@ -2,15 +2,16 @@ package testutil
 
 import (
 	"io"
+	"net/netip"
 	"testing"
 
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
 )
 
 func TestMockPacketSource(t *testing.T) {
 	packets := []*capture.PacketData{
-		{Data: []byte("<13>msg1"), SrcIP: "192.168.1.1"},
-		{Data: []byte("<13>msg2"), SrcIP: "192.168.1.2"},
+		{Data: []byte("<13>msg1"), SrcIP: netip.MustParseAddr("192.168.1.1")},
+		{Data: []byte("<13>msg2"), SrcIP: netip.MustParseAddr("192.168.1.2")},
 	}
 
 	mock := NewMockPacketSource(packets)
@@ -20,7 +21,7 @@ func TestMockPacketSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p1 == nil || string(p1.Data) != "<13>msg1" || p1.SrcIP != "192.168.1.1" {
+	if p1 == nil || string(p1.Data) != "<13>msg1" || p1.SrcIP.String() != "192.168.1.1" {
 		t.Errorf("unexpected packet 1: %+v", p1)
 	}
 
@@ -28,7 +29,7 @@ func TestMockPacketSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p2 == nil || string(p2.Data) != "<13>msg2" || p2.SrcIP != "192.168.1.2" {
+	if p2 == nil || string(p2.Data) != "<13>msg2" || p2.SrcIP.String() != "192.168.1.2" {
 		t.Errorf("unexpected packet 2: %+v", p2)
 	}
 

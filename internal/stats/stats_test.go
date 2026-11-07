@@ -14,12 +14,12 @@ func TestStatsTracker_Basic(t *testing.T) {
 		t.Fatal("expected new tracker to be empty")
 	}
 
-	st.AddEntry("192.168.1.10", "web-01", "<13>msg1")
+	st.AddEntryString("192.168.1.10", "web-01", "<13>msg1")
 	if st.IsEmpty() {
 		t.Fatal("expected tracker to not be empty")
 	}
 
-	st.AddEntry("192.168.1.10", "web-01", "<13>msg2")
+	st.AddEntryString("192.168.1.10", "web-01", "<13>msg2")
 
 	summary := st.GetSummary(10)
 	if summary.IntervalSeconds != 10 {
@@ -61,8 +61,8 @@ func TestStatsTracker_B4Acceptance(t *testing.T) {
 	st := NewStatsTracker()
 
 	// 1. Two IPs claiming the same hostname produce two entries
-	st.AddEntry("10.0.0.1", "shared-host", "<13>msg from 10.0.0.1")
-	st.AddEntry("10.0.0.2", "shared-host", "<13>msg from 10.0.0.2")
+	st.AddEntryString("10.0.0.1", "shared-host", "<13>msg from 10.0.0.1")
+	st.AddEntryString("10.0.0.2", "shared-host", "<13>msg from 10.0.0.2")
 
 	summary := st.GetSummary(10)
 	if len(summary.Hosts) != 2 {
@@ -73,7 +73,7 @@ func TestStatsTracker_B4Acceptance(t *testing.T) {
 	}
 
 	// 2. One IP varying hostnames produces one entry
-	st.AddEntry("10.0.0.1", "different-host", "<13>another msg from 10.0.0.1")
+	st.AddEntryString("10.0.0.1", "different-host", "<13>another msg from 10.0.0.1")
 	summary = st.GetSummary(10)
 	if len(summary.Hosts) != 2 {
 		t.Fatalf("expected still 2 entries after IP varied hostname, got %d", len(summary.Hosts))
@@ -91,7 +91,7 @@ func TestStatsTracker_S1Limits(t *testing.T) {
 	// Feed more than maxHosts distinct IPs
 	for i := 1; i <= 10; i++ {
 		ip := fmt.Sprintf("10.0.0.%d", i)
-		st.AddEntry(ip, "myhost", fmt.Sprintf("message %d", i))
+		st.AddEntryString(ip, "myhost", fmt.Sprintf("message %d", i))
 	}
 
 	summary := st.GetSummary(10)
@@ -105,7 +105,7 @@ func TestStatsTracker_S1Limits(t *testing.T) {
 	// Test sample truncation with large 64KB message
 	stBig := NewStatsTrackerWithLimits(10, sampleBytes)
 	largeMessage := strings.Repeat("A", 65536)
-	stBig.AddEntry("10.1.1.1", "bighost", largeMessage)
+	stBig.AddEntryString("10.1.1.1", "bighost", largeMessage)
 
 	summaryBig := stBig.GetSummary(10)
 	hostEntry := summaryBig.Hosts["10.1.1.1"]
@@ -119,7 +119,7 @@ func TestStatsTracker_S1Limits(t *testing.T) {
 
 func TestStatsTracker_Clear(t *testing.T) {
 	st := NewStatsTracker()
-	st.AddEntry("10.0.0.1", "host1", "msg1")
+	st.AddEntryString("10.0.0.1", "host1", "msg1")
 	st.Clear()
 	if !st.IsEmpty() {
 		t.Fatal("expected tracker to be empty after Clear")
@@ -142,8 +142,8 @@ func TestStatsTracker_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				st.AddEntry("10.0.0.1", "hostA", "msgA")
-				st.AddEntry("10.0.0.2", "hostB", "msgB")
+				st.AddEntryString("10.0.0.1", "hostA", "msgA")
+				st.AddEntryString("10.0.0.2", "hostB", "msgB")
 			}
 		}()
 	}
@@ -162,7 +162,7 @@ func TestStatsTracker_Concurrent(t *testing.T) {
 func TestStatsTracker_S6SampleOptions(t *testing.T) {
 	// 1. Test NoSample
 	stNoSample := NewStatsTrackerWithOptions(100, 2048, true, false)
-	stNoSample.AddEntry("192.168.1.50", "host1", "<13>secret message")
+	stNoSample.AddEntryString("192.168.1.50", "host1", "<13>secret message")
 	sumNoSample := stNoSample.GetSummary(10)
 	hNoSample := sumNoSample.Hosts["192.168.1.50"]
 	if hNoSample.Sample != "" {
@@ -182,7 +182,7 @@ func TestStatsTracker_S6SampleOptions(t *testing.T) {
 
 	// 2. Test RedactSample
 	stRedact := NewStatsTrackerWithOptions(100, 2048, false, true)
-	stRedact.AddEntry("192.168.1.50", "host1", "<13>secret message")
+	stRedact.AddEntryString("192.168.1.50", "host1", "<13>secret message")
 	sumRedact := stRedact.GetSummary(10)
 	hRedact := sumRedact.Hosts["192.168.1.50"]
 	if hRedact.Sample != "[REDACTED]" {
@@ -203,7 +203,7 @@ func TestStatsTracker_S6SampleOptions(t *testing.T) {
 
 func TestStatsTracker_S4CaptureStats(t *testing.T) {
 	st := NewStatsTracker()
-	st.AddEntry("10.0.0.1", "host1", "<13>test message")
+	st.AddEntryString("10.0.0.1", "host1", "<13>test message")
 
 	// Initially no capture stats
 	sum1 := st.GetSummary(10)
@@ -245,8 +245,8 @@ func TestStatsTracker_S4CaptureStats(t *testing.T) {
 
 func TestStatsTracker_SnapshotAndReset(t *testing.T) {
 	st := NewStatsTracker()
-	st.AddEntry("10.0.0.1", "host1", "msg1")
-	st.AddEntry("10.0.0.2", "host2", "msg2")
+	st.AddEntryString("10.0.0.1", "host1", "msg1")
+	st.AddEntryString("10.0.0.2", "host2", "msg2")
 
 	snap := st.SnapshotAndReset(5)
 	if snap.IntervalSeconds != 5 {
@@ -271,7 +271,7 @@ func TestStatsTracker_SnapshotAndReset(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				st.AddEntry(fmt.Sprintf("10.1.%d.%d", workerID, j), "host", "msg")
+				st.AddEntryString(fmt.Sprintf("10.1.%d.%d", workerID, j), "host", "msg")
 				mu.Lock()
 				totalAdded++
 				mu.Unlock()

@@ -3,7 +3,7 @@ package testutil
 import (
 	"io"
 
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
 )
 
 // MockPacketSource is an in-memory packet source for testing.

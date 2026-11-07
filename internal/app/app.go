@@ -8,10 +8,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/stats"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/syslog"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/config"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/stats"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/syslog"
 )
 
 const (
@@ -35,7 +35,7 @@ func RunSniffer(
 		fmt.Fprintf(stderr, "DEBUG: Starting capture loop\n")
 	}
 
-	statsTracker := stats.NewStatsTrackerWithOptions(cfg.MaxHosts, cfg.SampleBytes, cfg.NoSample, cfg.RedactSample)
+	statsTracker := stats.NewTrackerWithOptions(cfg.MaxHosts, cfg.SampleBytes, cfg.NoSample, cfg.RedactSample)
 	startTime := time.Now()
 	lastReportTime := startTime
 	duration := time.Duration(cfg.Interval) * time.Second
@@ -129,7 +129,7 @@ func RunSniffer(
 
 		messages := syslog.SplitMessages(packet.Data)
 		for _, msgBytes := range messages {
-			syslogMsg, err := syslog.ParseSyslogPacket(msgBytes)
+			syslogMsg, err := syslog.Parse(msgBytes)
 			if err != nil || syslogMsg == nil {
 				statsTracker.RecordIgnoredNotSyslog()
 				if cfg.Debug && err != nil {
@@ -195,7 +195,7 @@ func RunSniffer(
 	return nil
 }
 
-func writeSummary(w io.Writer, summary stats.JsonSummary, format string) error {
+func writeSummary(w io.Writer, summary stats.JSONSummary, format string) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	if format == "ndjson" {

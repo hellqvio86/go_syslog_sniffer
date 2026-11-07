@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/config"
+	"github.com/hellqvio86/go_syslog_sniffer/internal/stats"
 	"github.com/hellqvio86/go_syslog_sniffer/internal/testutil"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/stats"
 )
 
 func TestRunSniffer_Basic(t *testing.T) {
@@ -26,15 +27,15 @@ func TestRunSniffer_Basic(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<165>1 2026-11-07T12:00:00Z hostA app 1 - - Test message 1"),
-			SrcIP: "10.0.0.1",
+			SrcIP: netip.MustParseAddr("10.0.0.1"),
 		},
 		{
 			Data:  []byte("<165>1 2026-11-07T12:00:01Z hostA app 1 - - Test message 2"),
-			SrcIP: "10.0.0.1",
+			SrcIP: netip.MustParseAddr("10.0.0.1"),
 		},
 		{
 			Data:  []byte("<13>Oct 11 22:14:15 hostB login: ok"),
-			SrcIP: "10.0.0.2",
+			SrcIP: netip.MustParseAddr("10.0.0.2"),
 		},
 	}
 
@@ -104,7 +105,7 @@ func TestRunSniffer_Debug(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<13>msg"),
-			SrcIP: "192.168.1.10",
+			SrcIP: netip.MustParseAddr("192.168.1.10"),
 		},
 	}
 
@@ -135,7 +136,7 @@ func TestRunSniffer_ContextCancel(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<13>early exit msg"),
-			SrcIP: "127.0.0.1",
+			SrcIP: netip.MustParseAddr("127.0.0.1"),
 		},
 	}
 
@@ -176,7 +177,7 @@ func TestRunSniffer_EOFSource(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<13>Oct 11 22:14:15 host1 login: ok"),
-			SrcIP: "10.0.0.1",
+			SrcIP: netip.MustParseAddr("10.0.0.1"),
 		},
 	}
 
@@ -260,7 +261,7 @@ func (p *pacedPacketSource) NextPacket() (*capture.PacketData, error) {
 	time.Sleep(200 * time.Millisecond)
 	return &capture.PacketData{
 		Data:  []byte(fmt.Sprintf("<13>Oct 11 22:14:15 host%d app: msg", p.pktCount)),
-		SrcIP: fmt.Sprintf("192.168.1.%d", p.pktCount%5+1),
+		SrcIP: netip.MustParseAddr(fmt.Sprintf("192.168.1.%d", p.pktCount%5+1)),
 	}, nil
 }
 
@@ -312,7 +313,7 @@ func TestRunSniffer_MultiMessageTCPSegment(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  multiPayload,
-			SrcIP: "10.0.0.1",
+			SrcIP: netip.MustParseAddr("10.0.0.1"),
 		},
 	}
 
@@ -350,7 +351,7 @@ func TestRunSniffer_TLSDetected(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  tlsPayload,
-			SrcIP: "10.0.0.2",
+			SrcIP: netip.MustParseAddr("10.0.0.2"),
 		},
 	}
 
@@ -391,7 +392,7 @@ func TestRunSniffer_S6DebugEscaping(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte(rawMsgWithESC),
-			SrcIP: "10.0.0.9",
+			SrcIP: netip.MustParseAddr("10.0.0.9"),
 		},
 	}
 
@@ -425,7 +426,7 @@ func TestRunSniffer_S6NoSampleAndRedact(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<13>Oct 11 22:14:15 host secret_app: sensitive-token-12345"),
-			SrcIP: "10.0.0.8",
+			SrcIP: netip.MustParseAddr("10.0.0.8"),
 		},
 	}
 
@@ -479,7 +480,7 @@ func TestRunSniffer_S4CaptureStats(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<13>Oct 11 22:14:15 host app: test message"),
-			SrcIP: "10.0.0.7",
+			SrcIP: netip.MustParseAddr("10.0.0.7"),
 		},
 	}
 
@@ -519,7 +520,7 @@ func TestRunSniffer_R5FormatAndTimestamps(t *testing.T) {
 	packets := []*capture.PacketData{
 		{
 			Data:  []byte("<13>Oct 11 22:14:15 host app: msg"),
-			SrcIP: "10.0.0.5",
+			SrcIP: netip.MustParseAddr("10.0.0.5"),
 		},
 	}
 

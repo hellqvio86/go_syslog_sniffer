@@ -120,7 +120,7 @@ This replaces my earlier review, which was written against the old single-file `
 - `MockPacketSource` is defined in `capture.go` (non-test file), so it is exported API and compiled into the binary. Move it to a `_test.go` file or `internal/testutil`.
 - Add `OfflinePacketSource` (`pcap.OpenOffline`) and a `-r file.pcap` flag. It enables fixtures, regression tests and analysing captures from other machines.
 
-### [ ] R3. Layout and naming
+### [x] R3. Layout and naming
 - App-private code lives in `pkg/` (importable by anyone); move to `internal/`.
 - Stutter: `stats.StatsTracker`, `syslog.SyslogPacket`, `syslog.ParseSyslogPacket`, `stats.JsonSummary` → `stats.Tracker`, `syslog.Message`, `syslog.Parse`, `JSONSummary`.
 - `interface{}` → `any`; `err == flag.ErrHelp` in `main` → `errors.Is`; `PacketData.SrcIP string` → `netip.Addr` (avoids a string allocation per packet).
