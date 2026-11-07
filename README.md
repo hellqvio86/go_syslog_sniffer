@@ -1,6 +1,15 @@
 # Go Syslog Sniffer
 
 [![CI](https://github.com/hellqvio86/go_syslog_sniffer/actions/workflows/ci.yml/badge.svg)](https://github.com/hellqvio86/go_syslog_sniffer/actions/workflows/ci.yml)
+![Coverage](coverage.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/hellqvio86/go_syslog_sniffer)](https://goreportcard.com/report/github.com/hellqvio86/go_syslog_sniffer)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hellqvio86/go_syslog_sniffer.svg)](https://pkg.go.dev/github.com/hellqvio86/go_syslog_sniffer)
+![Go Version](https://img.shields.io/github/go-mod/go-version/hellqvio86/go_syslog_sniffer)
+![License](https://img.shields.io/github/license/hellqvio86/go_syslog_sniffer)
+![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen.svg)
+![GitHub last commit](https://img.shields.io/github/last-commit/hellqvio86/go_syslog_sniffer)
+![amd64](https://img.shields.io/badge/arch-amd64-blue)
+![arm64](https://img.shields.io/badge/arch-arm64-blue)
 
 A high-performance syslog packet sniffer written in Go.
 Captures syslog network traffic (UDP/TCP), parses RFC 5424 and RFC 3164 messages, counts events per host, takes a sample of the events, and outputs formatted JSON.

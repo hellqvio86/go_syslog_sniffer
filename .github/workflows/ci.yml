@@ -1,7 +1,7 @@
 ---
 name: CI
 permissions:
-  contents: read
+  contents: write
 
 'on':
   push:
@@ -13,6 +13,8 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -27,7 +29,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcap-dev netcat-openbsd make
+          sudo apt-get install -y libpcap-dev netcat-openbsd make curl
 
       - name: Verify formatting
         run: |
@@ -46,6 +48,21 @@ jobs:
 
       - name: Generate coverage
         run: make coverage
+
+      - name: Generate coverage badge
+        if: github.ref == 'refs/heads/main'
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Coverage: $COVERAGE%"
+          COLOR=$(awk -v val="$COVERAGE" 'BEGIN { if (val >= 80) print "brightgreen"; else if (val >= 70) print "green"; else if (val >= 50) print "yellow"; else print "red" }')
+          curl -s "https://img.shields.io/badge/coverage-${COVERAGE}%25-${COLOR}" > coverage.svg
+
+      - name: Commit coverage badge
+        if: github.ref == 'refs/heads/main'
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "chore: update coverage badge"
+          file_pattern: coverage.svg
 
   docker-build-and-test:
     name: Build and Test Docker Image
