@@ -61,7 +61,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** Key by source IP (`netip.Addr`); keep `hostname` (claimed) as a field, plus `src_ip`. Treat `-` as empty. Validate claimed hostnames (≤255 bytes, printable, no whitespace). Support the ISO-timestamp 3164 variant. Optionally keep `--group-by ip|hostname`.
 - **Acceptance:** two IPs claiming the same hostname produce two entries; one IP varying hostnames produces one entry; `-` never appears as a hostname.
 
-### [ ] B5. Capture failure is swallowed; persistent errors would spin
+### [x] B5. Capture failure is swallowed; persistent errors would spin
 - **Where:** `PcapPacketSource.NextPacket`, `app.RunSniffer`.
 - **Problem:** When the packet channel closes (interface down, pcap error) `NextPacket` returns `(nil, nil)` forever; the loop sleeps 10 ms per iteration until the interval ends, prints an empty `{"hosts":{}}` and exits 0. Separately, the `err != nil → continue` path has no backoff or limit; if a source ever returns persistent errors this spins at 100% CPU for the whole interval.
 - **Fix:** Return `io.EOF` (or a typed `ErrCaptureClosed`) from `NextPacket` when the channel is closed; `RunSniffer` returns an error (exit 1, message on stderr, partial results still printed). Add a consecutive-error limit with small backoff.

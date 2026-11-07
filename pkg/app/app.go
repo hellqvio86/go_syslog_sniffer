@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/stats"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/syslog"
+)
+
+const (
+	maxConsecutiveErrors    = 10
+	consecutiveErrorBackoff = 2 * time.Millisecond
 )
 
 // RunSniffer executes the packet capture loop using the provided configuration and packet source.
@@ -33,6 +39,11 @@ func RunSniffer(
 	startTime := time.Now()
 	lastReportTime := startTime
 	duration := time.Duration(cfg.Interval) * time.Second
+
+	var (
+		consecutiveErrors int
+		captureErr        error
+	)
 
 	for {
 		// Check context cancellation (e.g. SIGINT/SIGTERM)
@@ -59,11 +70,22 @@ func RunSniffer(
 
 		packet, err := source.NextPacket()
 		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, capture.ErrCaptureClosed) {
+				captureErr = fmt.Errorf("capture stream closed: %w", err)
+				break
+			}
+			consecutiveErrors++
+			if consecutiveErrors >= maxConsecutiveErrors {
+				captureErr = fmt.Errorf("exceeded max consecutive capture errors (%d): %w", maxConsecutiveErrors, err)
+				break
+			}
 			if cfg.Debug {
 				fmt.Fprintf(stderr, "DEBUG: Error reading packet: %v\n", err)
 			}
+			time.Sleep(consecutiveErrorBackoff)
 			continue
 		}
+		consecutiveErrors = 0
 
 		if packet == nil {
 			// No packet received (timeout); yield briefly
@@ -116,6 +138,11 @@ func RunSniffer(
 		if err := writeJSONPretty(stdout, summary); err != nil {
 			return err
 		}
+	}
+
+	if captureErr != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", captureErr)
+		return captureErr
 	}
 
 	return nil

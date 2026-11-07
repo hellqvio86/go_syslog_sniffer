@@ -1,7 +1,9 @@
 package capture
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -9,6 +11,9 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 )
+
+// ErrCaptureClosed is returned when the underlying packet capture channel closes.
+var ErrCaptureClosed = errors.New("capture closed")
 
 const (
 	defaultSnapLen = 262144
@@ -90,7 +95,10 @@ func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (
 func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 	select {
 	case pkt, ok := <-p.packets:
-		if !ok || pkt == nil {
+		if !ok {
+			return nil, io.EOF
+		}
+		if pkt == nil {
 			return nil, nil
 		}
 
@@ -133,8 +141,9 @@ func (p *PcapPacketSource) Close() error {
 
 // MockPacketSource is an in-memory packet source for testing.
 type MockPacketSource struct {
-	packets []*PacketData
-	idx     int
+	packets            []*PacketData
+	idx                int
+	ReturnEOFOnExhaust bool
 }
 
 // NewMockPacketSource creates a mock packet source with a predetermined packet sequence.
@@ -144,9 +153,12 @@ func NewMockPacketSource(packets []*PacketData) *MockPacketSource {
 	}
 }
 
-// NextPacket returns the next mock packet or (nil, nil) when exhausted.
+// NextPacket returns the next mock packet or (nil, nil) (or io.EOF if ReturnEOFOnExhaust is set) when exhausted.
 func (m *MockPacketSource) NextPacket() (*PacketData, error) {
 	if m.idx >= len(m.packets) {
+		if m.ReturnEOFOnExhaust {
+			return nil, io.EOF
+		}
 		return nil, nil
 	}
 	pkt := m.packets[m.idx]
