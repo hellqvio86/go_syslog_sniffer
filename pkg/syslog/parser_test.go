@@ -1,77 +1,110 @@
 package syslog
 
 import (
+	"errors"
 	"testing"
 )
 
-func TestParseValidSyslog(t *testing.T) {
-	data := []byte("<13>Hello world")
-	pkt := ParseSyslogPacket(data)
-	if pkt == nil {
-		t.Fatal("expected packet, got nil")
+func TestParseSyslogPacket_Table(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []byte
+		wantValid   bool
+		wantErr     error
+		wantHost    string
+		wantMessage string
+	}{
+		{
+			name:        "valid RFC 5424",
+			input:       []byte("<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - An application log entry"),
+			wantValid:   true,
+			wantHost:    "mymachine.example.com",
+			wantMessage: "<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - An application log entry",
+		},
+		{
+			name:        "valid RFC 3164",
+			input:       []byte("<13>Oct 11 22:14:15 myhost su: 'su root' failed for lonvick on /dev/pts/8"),
+			wantValid:   true,
+			wantHost:    "myhost",
+			wantMessage: "<13>Oct 11 22:14:15 myhost su: 'su root' failed for lonvick on /dev/pts/8",
+		},
+		{
+			name:        "valid octet-counted RFC 6587",
+			input:       []byte("79 <165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - A message"),
+			wantValid:   true,
+			wantHost:    "mymachine.example.com",
+			wantMessage: "<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - A message",
+		},
+		{
+			name:        "valid basic PRI only",
+			input:       []byte("<13>Hello world"),
+			wantValid:   true,
+			wantHost:    "",
+			wantMessage: "<13>Hello world",
+		},
+		{
+			name:      "rejected HTTP GET",
+			input:     []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			wantValid: false,
+			wantErr:   ErrNotSyslog,
+		},
+		{
+			name:      "rejected PRI out of range (>191)",
+			input:     []byte("<999>Oct 11 22:14:15 evil x: y"),
+			wantValid: false,
+			wantErr:   ErrNotSyslog,
+		},
+		{
+			name:      "rejected text with < in the middle",
+			input:     []byte("some text <13>Oct 11 22:14:15 server1 sshd: login"),
+			wantValid: false,
+			wantErr:   ErrNotSyslog,
+		},
+		{
+			name:      "rejected empty payload",
+			input:     []byte{},
+			wantValid: false,
+			wantErr:   ErrEmpty,
+		},
 	}
-	if pkt.Message != "<13>Hello world" {
-		t.Errorf("expected message '<13>Hello world', got %q", pkt.Message)
-	}
-	if pkt.Hostname != "" {
-		t.Errorf("expected empty hostname, got %q", pkt.Hostname)
-	}
-}
 
-func TestParseEmpty(t *testing.T) {
-	pkt := ParseSyslogPacket([]byte{})
-	if pkt != nil {
-		t.Fatalf("expected nil for empty packet, got %+v", pkt)
-	}
-}
-
-func TestParseInvalidUTF8(t *testing.T) {
-	data := []byte{0xff, 0xff, 0xff}
-	pkt := ParseSyslogPacket(data)
-	if pkt != nil {
-		t.Fatalf("expected nil for invalid UTF-8, got %+v", pkt)
-	}
-}
-
-func TestParseNoHostname(t *testing.T) {
-	data := []byte("Simple message without pri")
-	pkt := ParseSyslogPacket(data)
-	if pkt == nil {
-		t.Fatal("expected packet, got nil")
-	}
-	if pkt.Message != "Simple message without pri" {
-		t.Errorf("expected message, got %q", pkt.Message)
-	}
-	if pkt.Hostname != "" {
-		t.Errorf("expected empty hostname, got %q", pkt.Hostname)
-	}
-}
-
-func TestParseRFC5424(t *testing.T) {
-	data := []byte("<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - An application log entry")
-	pkt := ParseSyslogPacket(data)
-	if pkt == nil {
-		t.Fatal("expected packet, got nil")
-	}
-	if pkt.Hostname != "mymachine.example.com" {
-		t.Errorf("expected hostname 'mymachine.example.com', got %q", pkt.Hostname)
-	}
-}
-
-func TestParseRFC3164(t *testing.T) {
-	data := []byte("<13>Oct 11 22:14:15 myhost su: 'su root' failed for lonvick on /dev/pts/8")
-	pkt := ParseSyslogPacket(data)
-	if pkt == nil {
-		t.Fatal("expected packet, got nil")
-	}
-	if pkt.Hostname != "myhost" {
-		t.Errorf("expected hostname 'myhost', got %q", pkt.Hostname)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pkt, err := ParseSyslogPacket(tc.input)
+			if tc.wantValid {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if pkt == nil {
+					t.Fatal("expected non-nil packet")
+				}
+				if pkt.Hostname != tc.wantHost {
+					t.Errorf("hostname mismatch: got %q, want %q", pkt.Hostname, tc.wantHost)
+				}
+				if pkt.Message != tc.wantMessage {
+					t.Errorf("message mismatch: got %q, want %q", pkt.Message, tc.wantMessage)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected error, got nil packet=%+v", pkt)
+				}
+				if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+					t.Errorf("expected error %v, got %v", tc.wantErr, err)
+				}
+				if pkt != nil {
+					t.Errorf("expected nil packet, got %+v", pkt)
+				}
+			}
+		})
 	}
 }
 
 func TestParseWithTrailingNewline(t *testing.T) {
 	data := []byte("<165>1 2026-11-07T12:00:00.000Z myhost.net app 1 - - Log message\n")
-	pkt := ParseSyslogPacket(data)
+	pkt, err := ParseSyslogPacket(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if pkt == nil {
 		t.Fatal("expected packet, got nil")
 	}
@@ -80,19 +113,5 @@ func TestParseWithTrailingNewline(t *testing.T) {
 	}
 	if pkt.Message != "<165>1 2026-11-07T12:00:00.000Z myhost.net app 1 - - Log message\n" {
 		t.Errorf("expected original message preserved with newline, got %q", pkt.Message)
-	}
-}
-
-func TestParseWithPrefixGarbage(t *testing.T) {
-	data := []byte("SOME_RANDOM_HEADERS_<13>Oct 11 22:14:15 server1 sshd: login")
-	pkt := ParseSyslogPacket(data)
-	if pkt == nil {
-		t.Fatal("expected packet, got nil")
-	}
-	if pkt.Hostname != "server1" {
-		t.Errorf("expected hostname 'server1', got %q", pkt.Hostname)
-	}
-	if pkt.Message != "<13>Oct 11 22:14:15 server1 sshd: login" {
-		t.Errorf("expected trimmed message, got %q", pkt.Message)
 	}
 }

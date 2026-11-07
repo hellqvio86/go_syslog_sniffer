@@ -26,7 +26,7 @@ This replaces my earlier review, which was written against the old single-file `
 
 ## P0 — correctness
 
-### [ ] B1. Anything that is valid UTF-8 is counted as syslog **[probed]**
+### [x] B1. Anything that is valid UTF-8 is counted as syslog **[probed]**
 - **Where:** `syslog.ParseSyslogPacket`; `capture.PcapPacketSource.NextPacket` (raw-frame fallback).
 - **Problem:** The only gate is `utf8.Valid`. The old code at least required `<digits>`. Now:
   - A UDP datagram `GET / HTTP/1.1\r\n` on port 514 is counted as a syslog event (host = source IP, sample = that text). Probe result: `COUNTED as syslog`.

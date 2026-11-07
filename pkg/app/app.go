@@ -75,8 +75,11 @@ func RunSniffer(
 			fmt.Fprintf(stderr, "DEBUG: Received packet: len=%d\n", len(packet.Data))
 		}
 
-		syslogMsg := syslog.ParseSyslogPacket(packet.Data)
-		if syslogMsg == nil {
+		syslogMsg, err := syslog.ParseSyslogPacket(packet.Data)
+		if err != nil || syslogMsg == nil {
+			if cfg.Debug && err != nil {
+				fmt.Fprintf(stderr, "DEBUG: Ignored packet: %v\n", err)
+			}
 			continue
 		}
 

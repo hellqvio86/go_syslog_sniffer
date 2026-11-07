@@ -72,12 +72,13 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 			}
 		}
 
-		// Prefer ApplicationLayer payload; fallback to raw packet data
+		// Prefer ApplicationLayer payload; never fallback to raw packet data
 		var payload []byte
 		if appLayer := pkt.ApplicationLayer(); appLayer != nil {
 			payload = appLayer.Payload()
-		} else {
-			payload = pkt.Data()
+		}
+		if len(payload) == 0 {
+			return nil, nil
 		}
 
 		return &PacketData{

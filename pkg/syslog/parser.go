@@ -2,8 +2,17 @@ package syslog
 
 import (
 	"bytes"
+	"errors"
 	"regexp"
+	"strconv"
 	"unicode/utf8"
+)
+
+var (
+	// ErrEmpty is returned when the packet payload is empty.
+	ErrEmpty = errors.New("empty payload")
+	// ErrNotSyslog is returned when the payload does not have a valid syslog header.
+	ErrNotSyslog = errors.New("not a valid syslog message")
 )
 
 var (
@@ -16,6 +25,9 @@ var (
 	// <PRI>TIMESTAMP HOSTNAME MSG
 	// Group 3 captures the HOSTNAME.
 	rfc3164Regex = regexp.MustCompile(`^<(\d{1,3})>([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+`)
+
+	// headerPrefixRegex matches optional RFC 6587 octet count followed by <PRI>.
+	headerPrefixRegex = regexp.MustCompile(`^(?:(\d+)\s+)?<(\d{1,3})>`)
 )
 
 // SyslogPacket represents a parsed syslog packet.
@@ -25,20 +37,34 @@ type SyslogPacket struct {
 }
 
 // ParseSyslogPacket attempts to parse raw packet bytes into a SyslogPacket.
-// It checks for UTF-8 validity and extracts hostname if RFC 5424 or RFC 3164 headers are found.
-func ParseSyslogPacket(data []byte) *SyslogPacket {
+// It requires the message to start with <PRI> where PRI <= 191, optionally preceded by
+// an RFC 6587 octet count prefix.
+func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
 	if len(data) == 0 {
-		return nil
+		return nil, ErrEmpty
 	}
 
-	// Heuristic: If there is a '<' byte, look for syslog message starting at '<'
+	matches := headerPrefixRegex.FindSubmatch(data)
+	if matches == nil {
+		return nil, ErrNotSyslog
+	}
+
+	priStr := string(matches[2])
+	pri, err := strconv.Atoi(priStr)
+	if err != nil || pri > 191 {
+		return nil, ErrNotSyslog
+	}
+
+	// If there was an RFC 6587 octet-count prefix, advance to '<'
 	payloadBytes := data
-	if idx := bytes.IndexByte(data, '<'); idx != -1 {
-		payloadBytes = data[idx:]
+	if len(matches[1]) > 0 {
+		if idx := bytes.IndexByte(data, '<'); idx != -1 {
+			payloadBytes = data[idx:]
+		}
 	}
 
 	if !utf8.Valid(payloadBytes) {
-		return nil
+		return nil, ErrNotSyslog
 	}
 
 	msg := string(payloadBytes)
@@ -53,5 +79,5 @@ func ParseSyslogPacket(data []byte) *SyslogPacket {
 	return &SyslogPacket{
 		Message:  msg,
 		Hostname: hostname,
-	}
+	}, nil
 }
