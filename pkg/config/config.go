@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // Version holds the application version, injectible via ldflags.
@@ -25,6 +26,7 @@ type Config struct {
 	NoSample       bool
 	RedactSample   bool
 	PcapFile       string
+	Format         string
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -51,6 +53,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		noSample                    bool
 		redactSample                bool
 		pcapFileShort, pcapFileLong string
+		format                      string
 	)
 
 	// Short flags
@@ -75,6 +78,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.BoolVar(&noSample, "no-sample", false, "Do not include sample messages in output")
 	fs.BoolVar(&redactSample, "redact-sample", false, "Redact message samples in output")
 	fs.StringVar(&pcapFileLong, "read-file", "", "Read packets from a pcap file instead of a live interface")
+	fs.StringVar(&format, "format", "json", "Output format (json or ndjson, default json)")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
@@ -163,6 +167,14 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		sampleBytes = 2048
 	}
 
+	selectedFormat := strings.ToLower(strings.TrimSpace(format))
+	if selectedFormat == "" {
+		selectedFormat = "json"
+	}
+	if selectedFormat != "json" && selectedFormat != "ndjson" {
+		return nil, fmt.Errorf("invalid output format %q: must be 'json' or 'ndjson'", format)
+	}
+
 	selectedPcapFile := ""
 	if pcapFileLong != "" {
 		selectedPcapFile = pcapFileLong
@@ -184,5 +196,6 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		NoSample:       noSample,
 		RedactSample:   redactSample,
 		PcapFile:       selectedPcapFile,
+		Format:         selectedFormat,
 	}, nil
 }

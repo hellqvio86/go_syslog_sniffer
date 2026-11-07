@@ -514,3 +514,61 @@ func TestRunSniffer_S4CaptureStats(t *testing.T) {
 		t.Errorf("unexpected capture stats in JSON: %+v", summary.CaptureStats)
 	}
 }
+
+func TestRunSniffer_R5FormatAndTimestamps(t *testing.T) {
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte("<13>Oct 11 22:14:15 host app: msg"),
+			SrcIP: "10.0.0.5",
+		},
+	}
+
+	// 1. Test NDJSON format (compact single line)
+	cfgNDJSON := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		Format:    "ndjson",
+	}
+	mock1 := testutil.NewMockPacketSource(packets)
+	mock1.ReturnEOFOnExhaust = true
+	var stdout1, stderr1 bytes.Buffer
+	_ = RunSniffer(context.Background(), cfgNDJSON, mock1, &stdout1, &stderr1)
+
+	outLines := strings.Split(strings.TrimSpace(stdout1.String()), "\n")
+	if len(outLines) != 1 {
+		t.Errorf("expected exactly 1 line for ndjson output, got %d lines: %s", len(outLines), stdout1.String())
+	}
+
+	var sum1 stats.JsonSummary
+	if err := json.Unmarshal([]byte(outLines[0]), &sum1); err != nil {
+		t.Fatalf("failed to unmarshal ndjson line: %v", err)
+	}
+	if sum1.StartTime == "" || sum1.EndTime == "" {
+		t.Errorf("expected start_time and end_time to be populated, got start=%q end=%q", sum1.StartTime, sum1.EndTime)
+	}
+	// Verify RFC 3339 timestamp format
+	if _, err := time.Parse(time.RFC3339, sum1.StartTime); err != nil {
+		t.Errorf("invalid start_time RFC3339 format: %v", err)
+	}
+	if _, err := time.Parse(time.RFC3339, sum1.EndTime); err != nil {
+		t.Errorf("invalid end_time RFC3339 format: %v", err)
+	}
+
+	// 2. Test pretty JSON format (multiline)
+	cfgJSON := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		Format:    "json",
+	}
+	mock2 := testutil.NewMockPacketSource(packets)
+	mock2.ReturnEOFOnExhaust = true
+	var stdout2, stderr2 bytes.Buffer
+	_ = RunSniffer(context.Background(), cfgJSON, mock2, &stdout2, &stderr2)
+
+	jsonLines := strings.Split(strings.TrimSpace(stdout2.String()), "\n")
+	if len(jsonLines) <= 1 {
+		t.Errorf("expected pretty multiline json output, got %d lines: %s", len(jsonLines), stdout2.String())
+	}
+}

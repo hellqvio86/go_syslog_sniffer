@@ -2,6 +2,7 @@ package stats
 
 import (
 	"sync"
+	"time"
 )
 
 // IgnoredCounters tracks counters for packets that were seen and ignored.
@@ -30,6 +31,8 @@ type HostStats struct {
 
 // JsonSummary represents the serialized JSON report.
 type JsonSummary struct {
+	StartTime       string               `json:"start_time,omitempty"`
+	EndTime         string               `json:"end_time,omitempty"`
 	IntervalSeconds uint64               `json:"interval_seconds"`
 	Hosts           map[string]HostStats `json:"hosts"`
 	OverflowEvents  uint64               `json:"overflow_events,omitempty"`
@@ -191,7 +194,7 @@ func (st *StatsTracker) Clear() {
 }
 
 // SnapshotAndReset atomically returns a snapshot of the current stats and resets the tracked state under a single lock.
-func (st *StatsTracker) SnapshotAndReset(intervalSeconds uint64) JsonSummary {
+func (st *StatsTracker) SnapshotAndReset(intervalSeconds uint64, timestamps ...time.Time) JsonSummary {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -213,7 +216,17 @@ func (st *StatsTracker) SnapshotAndReset(intervalSeconds uint64) JsonSummary {
 		csCopy = &c
 	}
 
+	var startTime, endTime string
+	if len(timestamps) >= 1 && !timestamps[0].IsZero() {
+		startTime = timestamps[0].UTC().Format(time.RFC3339)
+	}
+	if len(timestamps) >= 2 && !timestamps[1].IsZero() {
+		endTime = timestamps[1].UTC().Format(time.RFC3339)
+	}
+
 	summary := JsonSummary{
+		StartTime:       startTime,
+		EndTime:         endTime,
 		IntervalSeconds: intervalSeconds,
 		Hosts:           hostsCopy,
 		OverflowEvents:  st.overflowEvents,
@@ -229,8 +242,8 @@ func (st *StatsTracker) SnapshotAndReset(intervalSeconds uint64) JsonSummary {
 	return summary
 }
 
-// GetSummary returns a snapshot of the current stats.
-func (st *StatsTracker) GetSummary(intervalSeconds uint64) JsonSummary {
+// GetSummary returns a snapshot of the current stats with optional start and end timestamps.
+func (st *StatsTracker) GetSummary(intervalSeconds uint64, timestamps ...time.Time) JsonSummary {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
@@ -252,7 +265,17 @@ func (st *StatsTracker) GetSummary(intervalSeconds uint64) JsonSummary {
 		csCopy = &c
 	}
 
+	var startTime, endTime string
+	if len(timestamps) >= 1 && !timestamps[0].IsZero() {
+		startTime = timestamps[0].UTC().Format(time.RFC3339)
+	}
+	if len(timestamps) >= 2 && !timestamps[1].IsZero() {
+		endTime = timestamps[1].UTC().Format(time.RFC3339)
+	}
+
 	return JsonSummary{
+		StartTime:       startTime,
+		EndTime:         endTime,
 		IntervalSeconds: intervalSeconds,
 		Hosts:           hostsCopy,
 		OverflowEvents:  st.overflowEvents,

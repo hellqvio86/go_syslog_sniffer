@@ -254,3 +254,29 @@ func TestParseReadFileFlag(t *testing.T) {
 		t.Errorf("expected PcapFile 'traffic.pcap', got %q", cfgLong.PcapFile)
 	}
 }
+
+func TestParseFormatFlag(t *testing.T) {
+	// 1. Default format is json
+	cfgDef, err := ParseArgs([]string{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgDef.Format != "json" {
+		t.Errorf("expected default format 'json', got %q", cfgDef.Format)
+	}
+
+	// 2. Explicit ndjson format
+	cfgNd, err := ParseArgs([]string{"--format", "ndjson"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgNd.Format != "ndjson" {
+		t.Errorf("expected format 'ndjson', got %q", cfgNd.Format)
+	}
+
+	// 3. Invalid format returns error
+	_, err = ParseArgs([]string{"--format", "xml"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for invalid format 'xml', got nil")
+	}
+}

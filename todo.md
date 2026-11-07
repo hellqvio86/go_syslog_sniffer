@@ -128,7 +128,7 @@ This replaces my earlier review, which was written against the old single-file `
 ### [x] R4. `StatsTracker` snapshot is not atomic
 - Periodic mode calls `GetSummary` then `Clear` as two lock acquisitions. Safe today (single goroutine), a trap once a ticker goroutine or HTTP endpoint exists. Add `SnapshotAndReset(interval)` that swaps the map under one lock.
 
-### [ ] R5. Periodic output is not machine-friendly
+### [x] R5. Periodic output is not machine-friendly
 - It emits concatenated pretty-printed JSON documents, which are awkward for log shippers. Add `--format json|ndjson` (compact, one object per line). Intermediate reports put the nominal `--frequency` in `interval_seconds`, not the measured elapsed time; report `start`/`end` timestamps instead.
 
 ### [ ] R6. CLI ergonomics

@@ -65,6 +65,7 @@ Options:
       --no-sample               Do not include sample messages in output
       --redact-sample           Redact message samples in output
       --list-interfaces         List available network interfaces and exit
+      --format <FORMAT>         Output format: json or ndjson (default: json)
   -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface
   -h, --help                    Print usage instructions
 ```
@@ -75,6 +76,8 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 
 ```json
 {
+  "start_time": "2026-11-07T12:00:00Z",
+  "end_time": "2026-11-07T12:00:10Z",
   "interval_seconds": 10,
   "hosts": {
     "192.168.1.10": {

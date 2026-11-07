@@ -57,8 +57,13 @@ func RunSniffer(
 		}
 
 		// Handle periodic output
-		if cfg.Periodic && time.Since(lastReportTime) >= time.Duration(cfg.Frequency)*time.Second {
+		now := time.Now()
+		if cfg.Periodic && now.Sub(lastReportTime) >= time.Duration(cfg.Frequency)*time.Second {
 			if !statsTracker.IsEmpty() {
+				elapsed := uint64(now.Sub(lastReportTime).Seconds())
+				if elapsed == 0 {
+					elapsed = 1
+				}
 				if cs, err := source.Stats(); err == nil && cs != nil {
 					statsTracker.SetCaptureStats(&stats.CaptureStats{
 						PacketsReceived:  cs.PacketsReceived,
@@ -70,12 +75,12 @@ func RunSniffer(
 							cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
 					}
 				}
-				summary := statsTracker.SnapshotAndReset(cfg.Frequency)
-				if err := writeJSONPretty(stdout, summary); err != nil {
+				summary := statsTracker.SnapshotAndReset(elapsed, lastReportTime, now)
+				if err := writeSummary(stdout, summary, cfg.Format); err != nil {
 					return err
 				}
 			}
-			lastReportTime = time.Now()
+			lastReportTime = now
 		}
 
 		packet, err := source.NextPacket()
@@ -159,19 +164,25 @@ func RunSniffer(
 	}
 
 	if !cfg.Periodic || !statsTracker.IsEmpty() {
-		var interval uint64
+		now := time.Now()
+		var (
+			interval uint64
+			start    time.Time
+		)
 		if cfg.Periodic {
-			elapsed := uint64(time.Since(lastReportTime).Seconds())
+			elapsed := uint64(now.Sub(lastReportTime).Seconds())
 			if elapsed == 0 {
 				elapsed = 1
 			}
 			interval = elapsed
+			start = lastReportTime
 		} else {
 			interval = cfg.Interval
+			start = startTime
 		}
 
-		summary := statsTracker.GetSummary(interval)
-		if err := writeJSONPretty(stdout, summary); err != nil {
+		summary := statsTracker.GetSummary(interval, start, now)
+		if err := writeSummary(stdout, summary, cfg.Format); err != nil {
 			return err
 		}
 	}
@@ -184,9 +195,12 @@ func RunSniffer(
 	return nil
 }
 
-func writeJSONPretty(w io.Writer, v interface{}) error {
+func writeSummary(w io.Writer, summary stats.JsonSummary, format string) error {
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
-	return enc.Encode(v)
+	if format == "ndjson" {
+		return enc.Encode(summary)
+	}
+	enc.SetIndent("", "  ")
+	return enc.Encode(summary)
 }
