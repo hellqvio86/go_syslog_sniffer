@@ -369,3 +369,92 @@ func TestRunSniffer_TLSDetected(t *testing.T) {
 		t.Errorf("expected ignored.not_syslog=1, got %d", summary.Ignored.NotSyslog)
 	}
 }
+
+func TestRunSniffer_S6DebugEscaping(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		Debug:     true,
+	}
+
+	rawMsgWithESC := "<13>Oct 11 22:14:15 host evil: \x1b[2Jcleared"
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte(rawMsgWithESC),
+			SrcIP: "10.0.0.9",
+		},
+	}
+
+	mockSource := capture.NewMockPacketSource(packets)
+	mockSource.ReturnEOFOnExhaust = true
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	_ = RunSniffer(context.Background(), cfg, mockSource, &stdout, &stderr)
+
+	stderrStr := stderr.String()
+	// Must contain the %q escaped sequence "\x1b[2Jcleared"
+	if !strings.Contains(stderrStr, `\x1b[2Jcleared`) {
+		t.Errorf("expected stderr to contain escaped control codes, got: %q", stderrStr)
+	}
+	// Must not contain the raw unescaped escape byte 0x1b in the debug log
+	capturedLine := ""
+	for _, line := range strings.Split(stderrStr, "\n") {
+		if strings.Contains(line, "Captured from 10.0.0.9") {
+			capturedLine = line
+			break
+		}
+	}
+	if strings.Contains(capturedLine, "\x1b[2J") {
+		t.Errorf("expected captured line to NOT have unescaped ESC byte, got: %q", capturedLine)
+	}
+}
+
+func TestRunSniffer_S6NoSampleAndRedact(t *testing.T) {
+	packets := []*capture.PacketData{
+		{
+			Data:  []byte("<13>Oct 11 22:14:15 host secret_app: sensitive-token-12345"),
+			SrcIP: "10.0.0.8",
+		},
+	}
+
+	// 1. Test NoSample
+	cfgNoSample := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		NoSample:  true,
+	}
+	mock1 := capture.NewMockPacketSource(packets)
+	mock1.ReturnEOFOnExhaust = true
+	var stdout1, stderr1 bytes.Buffer
+	_ = RunSniffer(context.Background(), cfgNoSample, mock1, &stdout1, &stderr1)
+
+	if strings.Contains(stdout1.String(), "sensitive-token-12345") {
+		t.Errorf("expected sensitive sample to be omitted with --no-sample, got: %s", stdout1.String())
+	}
+	if strings.Contains(stdout1.String(), `"sample"`) {
+		t.Errorf("expected sample field to be omitted entirely, got: %s", stdout1.String())
+	}
+
+	// 2. Test RedactSample
+	cfgRedact := &config.Config{
+		Interface:    "lo",
+		Port:         514,
+		Interval:     1,
+		RedactSample: true,
+	}
+	mock2 := capture.NewMockPacketSource(packets)
+	mock2.ReturnEOFOnExhaust = true
+	var stdout2, stderr2 bytes.Buffer
+	_ = RunSniffer(context.Background(), cfgRedact, mock2, &stdout2, &stderr2)
+
+	if strings.Contains(stdout2.String(), "sensitive-token-12345") {
+		t.Errorf("expected sensitive sample to be redacted with --redact-sample, got: %s", stdout2.String())
+	}
+	if !strings.Contains(stdout2.String(), `"[REDACTED]"`) {
+		t.Errorf("expected '[REDACTED]' in JSON output, got: %s", stdout2.String())
+	}
+}

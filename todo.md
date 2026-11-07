@@ -103,7 +103,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** Add `ignored` counters to the output (`no_payload`, `not_syslog`, `non_utf8_sanitized`), detect a TLS ClientHello (`0x16 0x03`) and report `"tls_suspected": true` for that source, split newline-framed TCP payloads into separate events, and document the remaining limitations in the README. Optional later: `gopacket/tcpassembly`.
 - **Acceptance:** tests for a multi-message TCP segment (count = number of messages) and a TLS-looking payload.
 
-### [ ] S6. Sample content handling
+### [x] S6. Sample content handling
 - **Problem:** Samples are raw log lines (possibly secrets/PII) printed to stdout; `--debug` prints every full message to stderr with control characters unescaped (terminal escape injection). JSON output itself is escaped correctly (`SetEscapeHTML(false)`; control chars stay `\uXXXX`).
 - **Fix:** Add `--no-sample` and `--redact-sample` options; print debug messages with `%q`; add a "Security considerations" section to the README.
 - **Acceptance:** test that a sample containing ESC is escaped in debug output; `--no-sample` output has no `sample` field.

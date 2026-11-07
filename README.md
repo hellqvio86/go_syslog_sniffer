@@ -53,15 +53,18 @@ make coverage
 syslog_sniffer [OPTIONS]
 
 Options:
-  -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo)
-  -p, --port <PORT>             Syslog port to monitor (default: 514)
-  -t, --interval <SECONDS>      Duration in seconds to capture (default: 10)
+  -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo, or "any", default: "any")
+  -p, --port <PORT>             Syslog port to monitor (1-65535, default: 514)
+  -t, --interval <SECONDS>      Duration in seconds to capture (0 = unlimited, default: 10)
   -d, --debug                   Enable debug diagnostic logging
   -v, --version                 Print version and exit
       --periodic                Enable periodic summary output
       --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)
       --max-hosts <COUNT>       Maximum distinct hosts to track in memory (default: 10000)
       --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)
+      --no-sample               Do not include sample messages in output
+      --redact-sample           Redact message samples in output
+      --list-interfaces         List available network interfaces and exit
   -h, --help                    Print usage instructions
 ```
 
@@ -93,6 +96,12 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 - **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be inspected. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
 - **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams) and non-syslog payloads are tracked in the top-level `ignored` section.
 - **UDP Fragmentation**: Large UDP syslog datagrams exceeding network MTU that undergo IP fragmentation only match port filters on the first fragment.
+
+## Security Considerations
+
+- **Sensitive Data & Sample Suppression**: Syslog messages frequently contain secrets, tokens, or PII. Use `--no-sample` to completely omit message samples from JSON reports, or `--redact-sample` to output `"[REDACTED]"` in place of raw packet contents.
+- **Terminal Injection Prevention**: Debug messages logged to `stderr` are safely escaped using `%q` formatting to prevent ANSI escape sequence injection (e.g., clearing screens or manipulating shell prompts).
+- **Resource Exhaustion Bounds**: The memory footprint is strictly bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), preventing denial-of-service via spoofed source addresses or oversized payloads.
 
 ## Docker
 

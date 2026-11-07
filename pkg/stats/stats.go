@@ -35,17 +35,24 @@ type StatsTracker struct {
 	stats          map[string]*HostStats
 	maxHosts       int
 	sampleBytes    int
+	noSample       bool
+	redactSample   bool
 	overflowEvents uint64
 	ignored        IgnoredCounters
 }
 
 // NewStatsTracker creates a StatsTracker with default limits (10000 max hosts, 2048 sample bytes).
 func NewStatsTracker() *StatsTracker {
-	return NewStatsTrackerWithLimits(10000, 2048)
+	return NewStatsTrackerWithOptions(10000, 2048, false, false)
 }
 
 // NewStatsTrackerWithLimits creates a StatsTracker with explicit bounds on tracked hosts and sample size.
 func NewStatsTrackerWithLimits(maxHosts int, sampleBytes int) *StatsTracker {
+	return NewStatsTrackerWithOptions(maxHosts, sampleBytes, false, false)
+}
+
+// NewStatsTrackerWithOptions creates a StatsTracker with customizable limits and sample redaction/suppression.
+func NewStatsTrackerWithOptions(maxHosts int, sampleBytes int, noSample bool, redactSample bool) *StatsTracker {
 	if maxHosts <= 0 {
 		maxHosts = 10000
 	}
@@ -53,9 +60,11 @@ func NewStatsTrackerWithLimits(maxHosts int, sampleBytes int) *StatsTracker {
 		sampleBytes = 2048
 	}
 	return &StatsTracker{
-		stats:       make(map[string]*HostStats),
-		maxHosts:    maxHosts,
-		sampleBytes: sampleBytes,
+		stats:        make(map[string]*HostStats),
+		maxHosts:     maxHosts,
+		sampleBytes:  sampleBytes,
+		noSample:     noSample,
+		redactSample: redactSample,
 	}
 }
 
@@ -89,9 +98,15 @@ func (st *StatsTracker) AddEntry(srcIP string, hostname string, message string) 
 
 	sample := message
 	truncated := false
-	if len(sample) > st.sampleBytes {
-		sample = sample[:st.sampleBytes]
-		truncated = true
+	if st.noSample {
+		sample = ""
+	} else if st.redactSample {
+		sample = "[REDACTED]"
+	} else {
+		if len(sample) > st.sampleBytes {
+			sample = sample[:st.sampleBytes]
+			truncated = true
+		}
 	}
 
 	st.stats[key] = &HostStats{

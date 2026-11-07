@@ -22,6 +22,8 @@ type Config struct {
 	MaxHosts       int
 	SampleBytes    int
 	ListInterfaces bool
+	NoSample       bool
+	RedactSample   bool
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -45,6 +47,8 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		maxHosts                    int
 		sampleBytes                 int
 		listInterfaces              bool
+		noSample                    bool
+		redactSample                bool
 	)
 
 	// Short flags
@@ -65,6 +69,8 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.IntVar(&maxHosts, "max-hosts", 10000, "Maximum number of distinct hosts to track in memory (default 10000)")
 	fs.IntVar(&sampleBytes, "sample-bytes", 2048, "Maximum byte length of message sample retained per host (default 2048)")
 	fs.BoolVar(&listInterfaces, "list-interfaces", false, "List available network interfaces and exit")
+	fs.BoolVar(&noSample, "no-sample", false, "Do not include sample messages in output")
+	fs.BoolVar(&redactSample, "redact-sample", false, "Redact message samples in output")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
@@ -164,5 +170,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		MaxHosts:       maxHosts,
 		SampleBytes:    sampleBytes,
 		ListInterfaces: listInterfaces,
+		NoSample:       noSample,
+		RedactSample:   redactSample,
 	}, nil
 }

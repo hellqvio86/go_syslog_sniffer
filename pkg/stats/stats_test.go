@@ -158,3 +158,45 @@ func TestStatsTracker_Concurrent(t *testing.T) {
 		t.Errorf("expected hostB count 5000, got %d", summary.Hosts["10.0.0.2"].Count)
 	}
 }
+
+func TestStatsTracker_S6SampleOptions(t *testing.T) {
+	// 1. Test NoSample
+	stNoSample := NewStatsTrackerWithOptions(100, 2048, true, false)
+	stNoSample.AddEntry("192.168.1.50", "host1", "<13>secret message")
+	sumNoSample := stNoSample.GetSummary(10)
+	hNoSample := sumNoSample.Hosts["192.168.1.50"]
+	if hNoSample.Sample != "" {
+		t.Errorf("expected empty sample with noSample=true, got %q", hNoSample.Sample)
+	}
+	if hNoSample.SampleTruncated {
+		t.Errorf("expected sample_truncated to be false with noSample=true")
+	}
+
+	bytesNoSample, err := json.Marshal(sumNoSample)
+	if err != nil {
+		t.Fatalf("failed to marshal summary: %v", err)
+	}
+	if strings.Contains(string(bytesNoSample), `"sample"`) {
+		t.Errorf("expected JSON to omit 'sample' key, but got: %s", string(bytesNoSample))
+	}
+
+	// 2. Test RedactSample
+	stRedact := NewStatsTrackerWithOptions(100, 2048, false, true)
+	stRedact.AddEntry("192.168.1.50", "host1", "<13>secret message")
+	sumRedact := stRedact.GetSummary(10)
+	hRedact := sumRedact.Hosts["192.168.1.50"]
+	if hRedact.Sample != "[REDACTED]" {
+		t.Errorf("expected sample to be '[REDACTED]', got %q", hRedact.Sample)
+	}
+	if hRedact.SampleTruncated {
+		t.Errorf("expected sample_truncated to be false with redactSample=true")
+	}
+
+	bytesRedact, err := json.Marshal(sumRedact)
+	if err != nil {
+		t.Fatalf("failed to marshal summary: %v", err)
+	}
+	if !strings.Contains(string(bytesRedact), `"sample":"[REDACTED]"`) {
+		t.Errorf("expected JSON to contain redacted sample, got: %s", string(bytesRedact))
+	}
+}

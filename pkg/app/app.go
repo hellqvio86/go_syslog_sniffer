@@ -35,7 +35,7 @@ func RunSniffer(
 		fmt.Fprintf(stderr, "DEBUG: Starting capture loop\n")
 	}
 
-	statsTracker := stats.NewStatsTrackerWithLimits(cfg.MaxHosts, cfg.SampleBytes)
+	statsTracker := stats.NewStatsTrackerWithOptions(cfg.MaxHosts, cfg.SampleBytes, cfg.NoSample, cfg.RedactSample)
 	startTime := time.Now()
 	lastReportTime := startTime
 	duration := time.Duration(cfg.Interval) * time.Second
@@ -130,7 +130,7 @@ func RunSniffer(
 			statsTracker.AddEntry(packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
 
 			if cfg.Debug {
-				fmt.Fprintf(stderr, "DEBUG: Captured from %s (claimed=%s): %s\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+				fmt.Fprintf(stderr, "DEBUG: Captured from %s (claimed=%s): %q\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
 			}
 		}
 	}

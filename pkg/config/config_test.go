@@ -221,3 +221,16 @@ func TestS2_IntervalAndPeriodicSemantics(t *testing.T) {
 		t.Fatal("expected error for frequency > 1<<31, got nil")
 	}
 }
+
+func TestParseSampleFlags(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--no-sample", "--redact-sample"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.NoSample {
+		t.Errorf("expected NoSample true, got false")
+	}
+	if !cfg.RedactSample {
+		t.Errorf("expected RedactSample true, got false")
+	}
+}
