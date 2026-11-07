@@ -245,3 +245,48 @@ func TestRunSniffer_PersistentErrors(t *testing.T) {
 		t.Errorf("expected at least 10 calls before stopping, got %d", faulty.callCount)
 	}
 }
+
+type pacedPacketSource struct {
+	pktCount int
+}
+
+func (p *pacedPacketSource) NextPacket() (*capture.PacketData, error) {
+	p.pktCount++
+	time.Sleep(200 * time.Millisecond)
+	return &capture.PacketData{
+		Data:  []byte(fmt.Sprintf("<13>Oct 11 22:14:15 host%d app: msg", p.pktCount)),
+		SrcIP: fmt.Sprintf("192.168.1.%d", p.pktCount%5+1),
+	}, nil
+}
+
+func (p *pacedPacketSource) Close() error {
+	return nil
+}
+
+func TestRunSniffer_PeriodicMultipleReports(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Periodic:  true,
+		Frequency: 1, // 1 second frequency
+		Interval:  0, // Unlimited duration
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3300*time.Millisecond)
+	defer cancel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	source := &pacedPacketSource{}
+	err := RunSniffer(ctx, cfg, source, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify that at least 3 reports were emitted
+	reportCount := strings.Count(stdout.String(), `"interval_seconds"`)
+	if reportCount < 3 {
+		t.Errorf("expected at least 3 periodic reports, got %d. Output:\n%s", reportCount, stdout.String())
+	}
+}

@@ -138,3 +138,62 @@ func TestCustomLimitsArgs(t *testing.T) {
 		t.Errorf("expected SampleBytes 1024, got %d", cfg.SampleBytes)
 	}
 }
+
+func TestS2_IntervalAndPeriodicSemantics(t *testing.T) {
+	// 1. Explicit 0 via -t
+	cfg, err := ParseArgs([]string{"-t", "0"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Interval != 0 {
+		t.Errorf("expected interval 0 for -t 0, got %d", cfg.Interval)
+	}
+
+	// 2. Explicit 0 via --interval
+	cfgLong, err := ParseArgs([]string{"--interval", "0"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgLong.Interval != 0 {
+		t.Errorf("expected interval 0 for --interval 0, got %d", cfgLong.Interval)
+	}
+
+	// 3. Periodic mode without explicit interval defaults to 0 (unlimited)
+	cfgPeriodic, err := ParseArgs([]string{"--periodic"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgPeriodic.Interval != 0 {
+		t.Errorf("expected interval 0 (unlimited) for periodic mode without -t, got %d", cfgPeriodic.Interval)
+	}
+
+	// 4. Standard mode without explicit interval defaults to 10
+	cfgDefault, err := ParseArgs([]string{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgDefault.Interval != 10 {
+		t.Errorf("expected default interval 10 for standard mode, got %d", cfgDefault.Interval)
+	}
+
+	// 5. Periodic mode with explicit interval preserves requested interval
+	cfgPeriodicExplicit, err := ParseArgs([]string{"--periodic", "-t", "30"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgPeriodicExplicit.Interval != 30 {
+		t.Errorf("expected interval 30, got %d", cfgPeriodicExplicit.Interval)
+	}
+
+	// 6. Huge interval overflowing 1<<31 rejects cleanly
+	_, err = ParseArgs([]string{"--interval", "3000000000"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for interval > 1<<31, got nil")
+	}
+
+	// 7. Huge frequency overflowing 1<<31 rejects cleanly
+	_, err = ParseArgs([]string{"--frequency", "3000000000"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for frequency > 1<<31, got nil")
+	}
+}

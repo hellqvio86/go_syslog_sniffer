@@ -67,6 +67,14 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		return nil, err
 	}
 
+	// Check which flags were explicitly passed
+	var intervalSet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "t" || f.Name == "interval" {
+			intervalSet = true
+		}
+	})
+
 	// Resolve interface
 	selectedInterface := "eth0"
 	if intfLong != "" {
@@ -83,12 +91,25 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		selectedPort = portShort
 	}
 
+	const maxAllowedDuration = 1 << 31
+
 	// Resolve interval
-	var selectedInterval uint64 = 10
-	if intervalLong != 0 {
-		selectedInterval = intervalLong
-	} else if intervalShort != 0 {
-		selectedInterval = intervalShort
+	var selectedInterval uint64
+	if intervalSet {
+		if intervalLong != 0 || (intervalShort == 0 && intervalLong != 0) {
+			selectedInterval = intervalLong
+		} else {
+			selectedInterval = intervalShort
+		}
+		if selectedInterval > maxAllowedDuration {
+			return nil, fmt.Errorf("interval %d exceeds maximum supported limit (%d seconds)", selectedInterval, maxAllowedDuration)
+		}
+	} else {
+		if periodic {
+			selectedInterval = 0 // periodic defaults to unlimited
+		} else {
+			selectedInterval = 10 // standard mode defaults to 10s
+		}
 	}
 
 	// Resolve debug
@@ -99,6 +120,9 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 
 	if frequency == 0 {
 		return nil, fmt.Errorf("frequency must be greater than 0")
+	}
+	if frequency > maxAllowedDuration {
+		return nil, fmt.Errorf("frequency %d exceeds maximum supported limit (%d seconds)", frequency, maxAllowedDuration)
 	}
 
 	if maxHosts <= 0 {

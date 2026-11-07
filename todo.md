@@ -77,7 +77,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** `--max-hosts` (default 10000) with an `overflow_events` counter in the output when the cap is hit; truncate hostname to 255 bytes and the sample to a configurable `--sample-bytes` (default 2048) with a `sample_truncated` boolean.
 - **Acceptance:** test feeding > max-hosts distinct keys and a 64 KB message: map size and sample length stay capped, overflow counter is reported.
 
-### [ ] S2. `--periodic` stops after `-t`; there is no "run until signalled"
+### [x] S2. `--periodic` stops after `-t`; there is no "run until signalled"
 - **Where:** `config.ParseArgs`, `app.RunSniffer`.
 - **Problem:** Periodic mode is bounded by `Interval` (default 10 s), so `--periodic --frequency 5` produces two reports and exits unless the user also passes a large `-t`. `-t 0` is indistinguishable from "unset" (the code uses 0 as sentinel for both port and interval), so infinite capture can't be requested. Huge values of `Interval`/`Frequency` overflow `time.Duration` (uint64 → int64) and make the loop exit immediately.
 - **Fix:** Detect explicitly-set flags with `fs.Visit`; define `-t 0` = unlimited; make periodic default to unlimited; validate upper bounds (`≤ 1<<31` seconds or use `time.Duration` with overflow check).

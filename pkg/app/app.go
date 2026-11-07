@@ -51,8 +51,8 @@ func RunSniffer(
 			break
 		}
 
-		// Check duration timeout
-		if time.Since(startTime) >= duration {
+		// Check duration timeout if finite interval requested
+		if cfg.Interval > 0 && time.Since(startTime) >= duration {
 			break
 		}
 
