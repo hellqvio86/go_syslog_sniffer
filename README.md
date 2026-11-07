@@ -3,7 +3,6 @@
 [![CI/CD](https://github.com/hellqvio86/go_syslog_sniffer/actions/workflows/ci.yml/badge.svg)](https://github.com/hellqvio86/go_syslog_sniffer/actions/workflows/ci.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/hellqvio86/go_syslog_sniffer)](https://github.com/hellqvio86/go_syslog_sniffer/releases)
 [![GHCR Container](https://img.shields.io/badge/container-ghcr.io-blue?logo=docker)](https://github.com/hellqvio86/go_syslog_sniffer/pkgs/container/go_syslog_sniffer)
-![Coverage](coverage.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hellqvio86/go_syslog_sniffer)](https://goreportcard.com/report/github.com/hellqvio86/go_syslog_sniffer)
 [![Go Reference](https://pkg.go.dev/badge/github.com/hellqvio86/go_syslog_sniffer.svg)](https://pkg.go.dev/github.com/hellqvio86/go_syslog_sniffer)
 ![Go Version](https://img.shields.io/github/go-mod/go-version/hellqvio86/go_syslog_sniffer)
@@ -14,30 +13,36 @@
 ![arm64](https://img.shields.io/badge/arch-arm64-blue)
 
 A high-performance syslog packet sniffer written in Go.
-Captures syslog network traffic (UDP/TCP), parses RFC 5424 and RFC 3164 messages, counts events per host, takes a sample of the events, and outputs formatted JSON.
+Captures syslog network traffic (UDP/TCP), parses RFC 5424 and RFC 3164 messages, counts events per source IP, extracts claimed hostnames, takes a bounded sample of the events, and outputs formatted JSON or NDJSON.
 
 ## Features
 
-- **Live Capture**: Uses libpcap / gopacket to capture network traffic on physical or loopback interfaces.
-- **Syslog Parsing**: Automatically identifies and parses RFC 5424 and RFC 3164 syslog formats to extract originating hostnames.
-- **Payload Preservation**: Retains complete syslog payloads (including multi-line and newline-terminated messages) without truncation or regex drops.
-- **Flexible Reporting**: Standard total summary mode or `--periodic` reporting mode.
-- **Clean JSON Output**: Emits unescaped, formatted JSON summary reports.
+- **Live & Offline Capture**: Uses libpcap / gopacket to capture live network traffic or replay from offline `.pcap` files (`-r / --read-file`).
+- **Syslog Parsing**: Automatically identifies and parses RFC 5424, RFC 3164 (including ISO-8601 high-precision timestamps), and RFC 6587 octet-counted syslog framing.
+- **Source IP Keying**: Entries are strictly keyed by verified source IP (`netip.Addr`) with zero allocations on packet lookup, preventing sender-controlled map explosion.
+- **Bounded Memory**: Memory footprint is bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), reporting `overflow_events` when limits are reached.
+- **Flexible Reporting**: Single summary mode or atomic `--periodic` interval reporting.
+- **Machine-Friendly Output**: Formatted JSON or single-line NDJSON (`--format json|ndjson`).
+- **Non-Root Docker Hardening**: Runs as unprivileged user `sniffer` (UID 10001) with Linux capabilities (`--cap-drop=ALL --cap-add=NET_RAW`).
 - **Graceful Termination**: Intercepts `SIGINT`/`SIGTERM` to cleanly output stats captured up to the moment of termination.
 
 ## Building and Running
 
 ### Prerequisites
 
+- **Go**: 1.26.0 or later (Ubuntu 24.04 `apt install golang` defaults to an older toolchain; install from [go.dev/dl](https://go.dev/dl/)).
+- **libpcap**: `libpcap-dev` on Debian/Ubuntu for building.
+- **Make & C Compiler**: `build-essential netcat-openbsd make curl`.
+
 ```console
 # Debian / Ubuntu
-sudo apt install -y golang libpcap-dev netcat-openbsd make
+sudo apt install -y build-essential libpcap-dev netcat-openbsd make curl
 ```
 
 ### Local Build
 
 ```bash
-# Build the project
+# Build the binary
 make build
 
 # Run unit tests
@@ -45,7 +50,24 @@ make test
 
 # Generate test coverage report
 make coverage
+
+# Generate CycloneDX SBOM
+make sbom
 ```
+
+### Privileges (`sudo` vs `setcap`)
+
+Capturing live packets via libpcap requires raw network capture access. You can either:
+
+1. **Run with `sudo`**:
+   ```bash
+   sudo ./syslog_sniffer -i any -p 514
+   ```
+2. **Grant `CAP_NET_RAW` once** to run as a standard non-root user:
+   ```bash
+   sudo setcap cap_net_raw+ep ./syslog_sniffer
+   ./syslog_sniffer -i any -p 514
+   ```
 
 ### Usage
 
@@ -58,20 +80,26 @@ Options:
   -t, --interval <SECONDS>      Duration in seconds to capture (0 = unlimited, default: 10)
   -d, --debug                   Enable debug diagnostic logging
   -v, --version                 Print version and exit
+  -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface
       --periodic                Enable periodic summary output
       --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)
+      --format <FORMAT>         Output format: json or ndjson (default: json)
       --max-hosts <COUNT>       Maximum distinct hosts to track in memory (default: 10000)
       --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)
       --no-sample               Do not include sample messages in output
       --redact-sample           Redact message samples in output
+      --promisc                 Enable promiscuous mode on network interface (default: false)
       --list-interfaces         List available network interfaces and exit
-      --format <FORMAT>         Output format: json or ndjson (default: json)
-  -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface
   -h, --help                    Print usage instructions
 
 Environment Variables:
   DEBUG=1                       Enable debug diagnostic logging (equivalent to -d / --debug)
 ```
+
+### Exit Codes
+
+- `0`: Successful execution, or requested `--help`, `--version`, or `--list-interfaces`.
+- `1`: Configuration error (e.g. invalid port, unknown flag), network interface failure, closed capture stream, or unrecoverable capture failure.
 
 ### JSON Schema (v0.2.0+)
 
@@ -87,12 +115,16 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
       "count": 42,
       "src_ip": "192.168.1.10",
       "hostname": "mymachine.example.com",
-      "sample": "<165>1 2026-11-07T12:00:00.000Z mymachine.example.com appname[123] - ID47 [exampleSDID@32473] Sample log entry"
+      "sample": "<165>1 2026-11-07T12:00:00.000Z mymachine.example.com appname[123] - ID47 [exampleSDID@32473] Sample log entry",
+      "sample_truncated": false,
+      "tls_suspected": false
     }
   },
+  "overflow_events": 0,
   "ignored": {
     "no_payload": 5,
-    "not_syslog": 2
+    "not_syslog": 2,
+    "non_utf8_sanitized": 1
   },
   "capture_stats": {
     "received": 120,
@@ -104,17 +136,19 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 
 ## Protocol Considerations & Limitations
 
-- **Multi-Message TCP Streams**: Newline-framed syslog messages arriving within a single TCP segment are split and counted individually.
-- **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be inspected. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
-- **Kernel & Interface Drops**: On packet capture termination or periodic reporting, kernel and interface statistics (`received`, `dropped`, `if_dropped`) are retrieved via `pcap_stats` and reported in `capture_stats` (and logged to `stderr` in `--debug` mode). Note that packet and host counts are lower bounds when drops > 0.
+- **Multi-Message TCP Streams**: Newline-delimited syslog messages arriving within a single TCP segment are split and counted individually.
+- **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be payload-inspected without proxying. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
+- **Kernel & Interface Drops**: On packet capture termination or periodic reporting, kernel and interface statistics (`received`, `dropped`, `if_dropped`) are retrieved via `pcap_stats` and reported in `capture_stats`. Note that packet and host counts are lower bounds when drops > 0.
 - **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams) and non-syslog payloads are tracked in the top-level `ignored` section.
 - **UDP Fragmentation**: Large UDP syslog datagrams exceeding network MTU that undergo IP fragmentation only match port filters on the first fragment.
+- **Promiscuous Mode**: Promiscuous mode is disabled by default (`--promisc` to enable). In typical homelab setups sniffing local traffic, non-promiscuous mode reduces overhead and eliminates the need for `CAP_NET_ADMIN`.
 
 ## Security Considerations
 
 - **Sensitive Data & Sample Suppression**: Syslog messages frequently contain secrets, tokens, or PII. Use `--no-sample` to completely omit message samples from JSON reports, or `--redact-sample` to output `"[REDACTED]"` in place of raw packet contents.
-- **Terminal Injection Prevention**: Debug messages logged to `stderr` are safely escaped using `%q` formatting to prevent ANSI escape sequence injection (e.g., clearing screens or manipulating shell prompts).
+- **Terminal Injection Prevention**: Debug messages logged to `stderr` are safely escaped using `%q` formatting to prevent ANSI escape sequence injection.
 - **Resource Exhaustion Bounds**: The memory footprint is strictly bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), preventing denial-of-service via spoofed source addresses or oversized payloads.
+- **Least Privilege**: The Docker container runs as non-root user `sniffer` (UID 10001) and requires only `CAP_NET_RAW`.
 
 ## Performance & Benchmarks
 
@@ -126,50 +160,42 @@ The capture pipeline uses lazy layer decoding and zero-copy packet slicing (`Dec
 
 ## Docker
 
-### Published Image
+### Published Images
 
-Published multi-architecture image:
-- **GitHub Container Registry (GHCR)**: [`ghcr.io/hellqvio86/go_syslog_sniffer`](https://github.com/hellqvio86/go_syslog_sniffer/pkgs/container/go_syslog_sniffer)
+Published multi-architecture images on GitHub Container Registry (GHCR):
+- [`ghcr.io/hellqvio86/go_syslog_sniffer`](https://github.com/hellqvio86/go_syslog_sniffer/pkgs/container/go_syslog_sniffer)
 
 Supported architectures:
 - `linux/amd64` (Standard 64-bit Intel/AMD)
 - `linux/arm64` (Raspberry Pi 4/5, Apple Silicon, AWS Graviton)
 
-Tags:
-- `latest` (tracks the latest release)
-- `<version>` (e.g., `0.1.0`)
+Image Tags:
+- `latest`: Latest tagged release
+- `<version>`: Specific semantic version release (e.g. `0.2.0`)
+- `edge`: Latest build from the `main` branch
+- `sha-<short>`: Immutable commit-specific build
 
-#### Pull Image from GHCR
+### Running the Container
 
-```bash
-# Pull latest release
-docker pull ghcr.io/hellqvio86/go_syslog_sniffer:latest
-
-# Or pull a specific release tag
-docker pull ghcr.io/hellqvio86/go_syslog_sniffer:0.1.0
-```
-
-#### Run Published Container
-
-The container requires `NET_RAW` and `NET_ADMIN` capabilities for raw packet capture, and `--network host` to access network interfaces:
+The container drops all capabilities except `NET_RAW` and runs as non-root user `sniffer`:
 
 ```bash
 docker run --rm \
-  --cap-add=NET_RAW \
-  --cap-add=NET_ADMIN \
   --network host \
-  ghcr.io/hellqvio86/go_syslog_sniffer:latest --interface eth0 --port 514
+  --cap-drop=ALL \
+  --cap-add=NET_RAW \
+  ghcr.io/hellqvio86/go_syslog_sniffer:latest --interface any --port 514
 ```
 
 Run with periodic reporting:
 
 ```bash
 docker run --rm \
-  --cap-add=NET_RAW \
-  --cap-add=NET_ADMIN \
   --network host \
+  --cap-drop=ALL \
+  --cap-add=NET_RAW \
   ghcr.io/hellqvio86/go_syslog_sniffer:latest \
-  --interface eth0 \
+  --interface any \
   --port 514 \
   --periodic \
   --frequency 5
@@ -184,17 +210,7 @@ To build and run the image locally from source:
 make docker-build
 
 # Run the local container
-make docker-run ARGS="--interface eth0 --port 514"
-```
-
-Or manually:
-
-```bash
-docker run --rm \
-  --cap-add=NET_RAW \
-  --cap-add=NET_ADMIN \
-  --network host \
-  syslog_sniffer:latest --interface eth0 --port 514
+make docker-run ARGS="--interface any --port 514"
 ```
 
 ## Available Make Targets
@@ -207,18 +223,14 @@ make test               # Run unit tests
 make lint               # Run linter and static analysis
 make fmt                # Format Go source files
 make coverage           # Generate test coverage report
+make sbom               # Generate CycloneDX SBOM
 make docker-build       # Build Docker image
 make docker-run         # Run Docker container
 make clean              # Clean build artifacts
+make hooks              # Install git pre-commit hook
+make secrets            # Run TruffleHog secret scanning
+make trivy              # Run Trivy vulnerability scanning
 ```
-
-## CI/CD
-
-Continuous integration runs via GitHub Actions on every push and pull request to `main`:
-- Code formatting check (`gofmt`)
-- Go static analysis (`go vet`)
-- Unit tests with race detection (`go test -v -race`)
-- Container image build and end-to-end integration tests (`tests/e2e_docker.sh`, `tests/e2e_periodic_docker.sh`)
 
 ## License
 

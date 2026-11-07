@@ -174,13 +174,13 @@ This replaces my earlier review, which was written against the old single-file `
 - `--cap-add=NET_ADMIN` is recommended everywhere, but the code only needs raw capture; NET_ADMIN is probably unnecessary once promiscuous mode is optional (N1). **[verify]** by running with only `NET_RAW`.
 - No `.dockerignore` (`COPY . .` sends `.git`, binaries, coverage files); base images referenced by tag only; the sibling Rust image uses Debian Trixie while this one uses Bookworm.
 
-### [ ] C6. README accuracy
+### [x] C6. README accuracy
 - Options list omits `-v/--version` and the `DEBUG=1` env var.
 - Prerequisites say `apt install golang`; on Ubuntu 24.04 that installs Go 1.22 while `go.mod` requires 1.25.0 (works only via toolchain auto-download). State the required version.
 - "Retains complete syslog payloads … without truncation" conflicts with S1; "high-performance" is unmeasured (R1); Docker tag table is wrong (C1).
 - Missing sections: privileges (`sudo` vs `setcap`), limitations (S5), security considerations (S6), JSON schema, exit codes.
 
-### [ ] C7. Dependency health **[verify]**
+### [x] C7. Dependency health **[verify]**
 - `github.com/google/gopacket v1.1.19` is pinned. Check whether the upstream is still maintained and whether the `github.com/gopacket/gopacket` fork is the better dependency; run `govulncheck`. `golang.org/x/net` is only an indirect requirement (bumped by Dependabot).
 
 ### [x] N1. Promiscuous mode is hard-coded
