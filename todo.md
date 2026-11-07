@@ -138,7 +138,7 @@ This replaces my earlier review, which was written against the old single-file `
 
 ## P3 — tests
 
-### [ ] T1. Parser
+### [x] T1. Parser
 - Add table-driven cases from B1/B2/B4 plus `FuzzParseSyslogPacket` asserting: no panic, returned message is valid UTF-8, `json.Marshal` of the result round-trips.
 - Existing `TestParseNoHostname` asserts that plain text without PRI is accepted as syslog; it encodes the B1 bug and must be changed.
 
