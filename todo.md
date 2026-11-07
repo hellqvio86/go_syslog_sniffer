@@ -71,7 +71,7 @@ This replaces my earlier review, which was written against the old single-file `
 
 ## P1 — robustness and security
 
-### [ ] S1. Unbounded memory from untrusted input
+### [x] S1. Unbounded memory from untrusted input
 - **Where:** `stats.StatsTracker`, `syslog.rfc*Regex` (`\S+` has no length bound), `PacketData.Data`.
 - **Problem:** The host map is keyed by a sender-controlled string of unbounded length, and each entry stores the whole first message (up to ~64 KB for UDP, more for TCP). A single sender can grow memory without limit; `GetSummary` then copies everything again.
 - **Fix:** `--max-hosts` (default 10000) with an `overflow_events` counter in the output when the cap is hit; truncate hostname to 255 bytes and the sample to a configurable `--sample-bytes` (default 2048) with a `sample_truncated` boolean.
