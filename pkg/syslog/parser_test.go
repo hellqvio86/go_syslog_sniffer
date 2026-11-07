@@ -148,3 +148,21 @@ func TestParseNonUTF8_Sanitized(t *testing.T) {
 		t.Errorf("expected sanitized message %q, got %q", wantMessage, pkt.Message)
 	}
 }
+
+func BenchmarkParseSyslogPacket_RFC5424(b *testing.B) {
+	data := []byte("<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - An application log entry")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseSyslogPacket(data)
+	}
+}
+
+func BenchmarkParseSyslogPacket_RFC3164(b *testing.B) {
+	data := []byte("<13>Oct 11 22:14:15 myhost su: 'su root' failed for lonvick on /dev/pts/8")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseSyslogPacket(data)
+	}
+}

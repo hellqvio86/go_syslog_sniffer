@@ -110,6 +110,14 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 - **Terminal Injection Prevention**: Debug messages logged to `stderr` are safely escaped using `%q` formatting to prevent ANSI escape sequence injection (e.g., clearing screens or manipulating shell prompts).
 - **Resource Exhaustion Bounds**: The memory footprint is strictly bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), preventing denial-of-service via spoofed source addresses or oversized payloads.
 
+## Performance & Benchmarks
+
+The capture pipeline uses lazy layer decoding and zero-copy packet slicing (`DecodeOptions{Lazy: true, NoCopy: true}`) along with an 8 MB kernel ring buffer and reused timer allocations. Benchmark results:
+
+- **Syslog Parser (RFC 5424)**: ~1,095,000 packets/sec (1.09 µs/op, 6 allocs/op)
+- **Syslog Parser (RFC 3164)**: ~1,390,000 packets/sec (0.82 µs/op, 6 allocs/op)
+- **Offline Pcap Replay (100k packets)**: ~1,430,000 packets/sec (179 MB/s throughput)
+
 ## Docker
 
 ### Published Image

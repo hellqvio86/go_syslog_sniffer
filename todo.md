@@ -112,7 +112,7 @@ This replaces my earlier review, which was written against the old single-file `
 
 ## P2 — design and code quality
 
-### [ ] R1. Capture performance and the "high-performance" claim
+### [x] R1. Capture performance and the "high-performance" claim
 - `gopacket.NewPacketSource` is used with default `DecodeOptions` (copies each packet, decodes all layers eagerly); `NextPacket` allocates a `time.After` timer on every call. No benchmark exists.
 - **Fix:** set `DecodeOptions{Lazy: true, NoCopy: true}` (copy the payload before storing), reuse one `time.Timer` or restructure around the channel/ctx, add `BenchmarkParseSyslogPacket` and a replay benchmark over a synthetic 100k-packet pcap; either keep the README claim with numbers or drop it.
 

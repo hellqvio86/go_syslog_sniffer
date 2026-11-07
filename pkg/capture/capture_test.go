@@ -375,3 +375,59 @@ func TestNewOfflinePacketSource(t *testing.T) {
 		t.Errorf("expected EOF or nil after single packet file, got %+v", pd2)
 	}
 }
+
+func BenchmarkOfflineReplay_100kPackets(b *testing.B) {
+	tmpDir := b.TempDir()
+	pcapPath := filepath.Join(tmpDir, "bench_100k.pcap")
+
+	f, err := os.Create(pcapPath)
+	if err != nil {
+		b.Fatalf("failed to create bench pcap: %v", err)
+	}
+	w := pcapgo.NewWriter(f)
+	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
+		f.Close()
+		b.Fatalf("failed to write header: %v", err)
+	}
+
+	udpPkt := buildFrame(&testing.T{}, &layers.UDP{SrcPort: 54321, DstPort: 514}, []byte("<165>1 2026-11-07T12:00:00Z mymachine.example.com app 1234 ID47 - Benchmark message"), layers.IPProtocolUDP)
+	ci := gopacket.CaptureInfo{
+		Timestamp:     time.Now(),
+		CaptureLength: len(udpPkt.Data()),
+		Length:        len(udpPkt.Data()),
+	}
+
+	const packetCount = 100000
+	for i := 0; i < packetCount; i++ {
+		if err := w.WritePacket(ci, udpPkt.Data()); err != nil {
+			f.Close()
+			b.Fatalf("failed to write packet %d: %v", i, err)
+		}
+	}
+	_ = f.Close()
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(udpPkt.Data()) * packetCount))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		src, err := NewOfflinePacketSource(pcapPath, 514, "dst")
+		if err != nil {
+			b.Fatalf("failed to open pcap: %v", err)
+		}
+		var count int
+		for {
+			pd, err := src.NextPacket()
+			if err != nil {
+				break
+			}
+			if pd != nil && !pd.NoPayload {
+				count++
+			}
+		}
+		_ = src.Close()
+		if count != packetCount {
+			b.Fatalf("expected %d packets, read %d", packetCount, count)
+		}
+	}
+}

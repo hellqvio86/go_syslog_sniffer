@@ -47,6 +47,7 @@ type PcapPacketSource struct {
 	handle    *pcap.Handle
 	packets   <-chan gopacket.Packet
 	lastStats *Stats
+	timer     *time.Timer
 }
 
 // BuildBPFFilter creates a BPF filter expression for the specified direction and ports.
@@ -126,6 +127,10 @@ func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (
 	}
 
 	pktSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	pktSource.DecodeOptions = gopacket.DecodeOptions{
+		Lazy:   true,
+		NoCopy: true,
+	}
 	return &PcapPacketSource{
 		handle:  handle,
 		packets: pktSource.Packets(),
@@ -135,6 +140,18 @@ func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (
 // NextPacket reads the next packet from the pcap stream.
 // If no packet is available within readTimeout or channel is empty, it returns (nil, nil).
 func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
+	if p.timer == nil {
+		p.timer = time.NewTimer(readTimeout)
+	} else {
+		if !p.timer.Stop() {
+			select {
+			case <-p.timer.C:
+			default:
+			}
+		}
+		p.timer.Reset(readTimeout)
+	}
+
 	select {
 	case pkt, ok := <-p.packets:
 		if !ok {
@@ -155,10 +172,15 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 			}
 		}
 
-		// Prefer ApplicationLayer payload; never fallback to raw packet data
+		// Prefer ApplicationLayer payload; never fallback to raw packet data.
+		// Because NoCopy: true is enabled on packet decoding, explicitly copy the payload slice.
 		var payload []byte
 		if appLayer := pkt.ApplicationLayer(); appLayer != nil {
-			payload = appLayer.Payload()
+			raw := appLayer.Payload()
+			if len(raw) > 0 {
+				payload = make([]byte, len(raw))
+				copy(payload, raw)
+			}
 		}
 		if len(payload) == 0 {
 			return &PacketData{
@@ -171,7 +193,7 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 			Data:  payload,
 			SrcIP: srcIP,
 		}, nil
-	case <-time.After(readTimeout):
+	case <-p.timer.C:
 		return nil, nil
 	}
 }
@@ -193,6 +215,9 @@ func (p *PcapPacketSource) Stats() (*Stats, error) {
 
 // Close closes the underlying pcap handle after saving final statistics.
 func (p *PcapPacketSource) Close() error {
+	if p.timer != nil {
+		p.timer.Stop()
+	}
 	if p.handle != nil {
 		if st, err := p.handle.Stats(); err == nil && st != nil {
 			p.lastStats = &Stats{
@@ -221,6 +246,10 @@ func NewOfflinePacketSource(pcapFile string, port int, direction string) (*PcapP
 	}
 
 	pktSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	pktSource.DecodeOptions = gopacket.DecodeOptions{
+		Lazy:   true,
+		NoCopy: true,
+	}
 	return &PcapPacketSource{
 		handle:  handle,
 		packets: pktSource.Packets(),
