@@ -1,4 +1,4 @@
-.PHONY: help build run clean test fmt format lint coverage docker-build docker-run docker-run-interactive docker-tag docker-push docker-clean all renovate renovate-summary
+.PHONY: help build run clean test fmt format lint coverage sbom docker-build docker-run docker-run-interactive docker-tag docker-push docker-clean all renovate renovate-summary hooks secrets trivy
 
 # Variables
 BINARY_NAME = syslog_sniffer
@@ -46,6 +46,18 @@ coverage: ## Generate test coverage report
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | grep total | awk '{print "Total coverage: " $$3}'
+
+sbom: ## Generate SBOM in CycloneDX format
+	@echo "Generating SBOM..."
+	@if command -v syft >/dev/null 2>&1; then \
+		syft dir:. -o cyclonedx-json=sbom.json; \
+	elif command -v trivy >/dev/null 2>&1; then \
+		trivy fs --format cyclonedx -o sbom.json .; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v $$(pwd):/src -w /src aquasec/trivy:latest fs --format cyclonedx -o sbom.json .; \
+	else \
+		echo "ERROR: trivy, syft, or docker is required!" >&2 && exit 1; \
+	fi
 
 docker-build: ## Build Docker image
 	$(DOCKER) build -t $(IMAGE_NAME):$(IMAGE_TAG) .

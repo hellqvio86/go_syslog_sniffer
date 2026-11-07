@@ -165,7 +165,7 @@ This replaces my earlier review, which was written against the old single-file `
 - Actions are pinned by major tag, not commit SHA. For a security tool, pin by SHA (Renovate can maintain them).
 - `build-and-test` commits `coverage.svg` back to `main` via `git-auto-commit-action`, creating bot commits and requiring write access to the default branch (breaks with branch protection). Prefer Codecov, a gist badge, or generating the badge at release time.
 
-### [ ] C4. Missing checks
+### [x] C4. Missing checks
 - Add to CI: `golangci-lint` (or `staticcheck`), `govulncheck ./...`, `go mod tidy` + `git diff --exit-code`, `hadolint Dockerfile`, a container scan (Trivy/Grype), SBOM and provenance (`sbom: true`, `provenance: mode=max` on `docker/build-push-action`) and image signing (cosign keyless). The README positions this as parity with `rust_syslog_sniffer`, which has SBOM generation; this repo has no `make sbom`.
 
 ### [ ] C5. Dockerfile
