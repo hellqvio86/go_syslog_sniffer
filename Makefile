@@ -7,6 +7,7 @@ DOCKER = docker
 IMAGE_NAME = syslog_sniffer
 IMAGE_TAG = latest
 REGISTRY ?= # e.g. docker.io/username
+VERSION ?= $(shell tr -d '[:space:]' < VERSION 2>/dev/null || echo "0.1.0")
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -15,7 +16,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the Go application
-	go build -ldflags="-s -w" -o $(BINARY_NAME) main.go
+	go build -ldflags="-s -w -X github.com/hellqvio86/go_syslog_sniffer/pkg/config.Version=$(VERSION)" -o $(BINARY_NAME) main.go
 	ln -sf $(BINARY_NAME) $(LEGACY_NAME)
 
 $(LEGACY_NAME): build

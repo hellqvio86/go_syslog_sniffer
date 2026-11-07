@@ -1,13 +1,17 @@
 ---
-name: CI
+name: CI/CD
+
 permissions:
   contents: write
+  packages: write
 
 'on':
   push:
     branches: ["main", "master"]
   pull_request:
     branches: ["main", "master"]
+  release:
+    types: [published]
 
 jobs:
   build-and-test:
@@ -59,7 +63,7 @@ jobs:
 
       - name: Commit coverage badge
         if: github.ref == 'refs/heads/main'
-        uses: stefanzweifel/git-auto-commit-action@v7
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: update coverage badge"
           file_pattern: coverage.svg
@@ -100,3 +104,173 @@ jobs:
         run: |
           chmod +x tests/e2e_periodic_docker.sh
           ./tests/e2e_periodic_docker.sh
+
+  build-release-binaries:
+    name: Build Multi-Arch Release Binaries
+    needs: docker-build-and-test
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract version
+        id: version
+        run: |
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$file_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must be SemVer without v-prefix (example: 1.2.3)"
+            exit 1
+          fi
+          echo "version=$file_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries via Buildx
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+
+          for arch in amd64 arm64; do
+            echo "Building linux/$arch..."
+            mkdir -p "dist/syslog_sniffer_${VERSION}_linux_${arch}"
+            docker buildx build \
+              --platform "linux/${arch}" \
+              --build-arg "VERSION=${VERSION}" \
+              --target artifacts \
+              --output "type=local,dest=dist/syslog_sniffer_${VERSION}_linux_${arch}" .
+
+            tar -C "dist/syslog_sniffer_${VERSION}_linux_${arch}" -czf "dist/syslog_sniffer_${VERSION}_linux_${arch}.tar.gz" syslog_sniffer
+            rm -rf "dist/syslog_sniffer_${VERSION}_linux_${arch}"
+          done
+
+          cd dist
+          sha256sum syslog_sniffer_*.tar.gz > checksums.txt
+          cd ..
+          ls -la dist/
+
+      - name: Upload Binary Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/*
+
+  draft-release:
+    name: Create Draft Release
+    needs: build-release-binaries
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if VERSION changed
+        id: version
+        run: |
+          changed="false"
+          CURRENT_VERSION="$(tr -d '[:space:]' < VERSION)"
+          PREVIOUS_VERSION="$(git show HEAD~1:VERSION 2>/dev/null | tr -d '[:space:]' || true)"
+
+          echo "Current version: $CURRENT_VERSION"
+          echo "Previous version: $PREVIOUS_VERSION"
+
+          if [ -n "$PREVIOUS_VERSION" ] && [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+            changed="true"
+          elif [ -z "$PREVIOUS_VERSION" ]; then
+            changed="true"
+          fi
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download release artifacts
+        if: steps.version.outputs.changed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: release_assets
+
+      - name: Create or update draft release
+        if: steps.version.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "Release v${{ steps.version.outputs.version }}"
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          files: release_assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-docker:
+    name: Build & Publish Multi-Arch Container
+    needs: draft-release
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          echo "version=$file_version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -23,6 +23,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.ShowVersion {
+		fmt.Printf("syslog_sniffer %s\n", config.Version)
+		os.Exit(0)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

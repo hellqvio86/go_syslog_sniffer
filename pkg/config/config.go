@@ -7,14 +7,18 @@ import (
 	"os"
 )
 
+// Version holds the application version, injectible via ldflags.
+var Version = "0.1.0"
+
 // Config holds the runtime configuration parameters for syslog_sniffer.
 type Config struct {
-	Interface string
-	Port      int
-	Debug     bool
-	Interval  uint64
-	Periodic  bool
-	Frequency uint64
+	Interface   string
+	Port        int
+	Debug       bool
+	Interval    uint64
+	Periodic    bool
+	Frequency   uint64
+	ShowVersion bool
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -34,6 +38,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		intervalShort, intervalLong uint64
 		periodic                    bool
 		frequency                   uint64
+		versionShort, versionLong   bool
 	)
 
 	// Short flags
@@ -41,6 +46,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.IntVar(&portShort, "p", 0, "Syslog port to monitor (default 514)")
 	fs.BoolVar(&debugShort, "d", false, "Enable debug output")
 	fs.Uint64Var(&intervalShort, "t", 0, "Capture duration in seconds (default 10)")
+	fs.BoolVar(&versionShort, "v", false, "Print version and exit")
 
 	// Long flags (parities with rust_syslog_sniffer)
 	fs.StringVar(&intfLong, "interface", "", "Network interface to sniff (e.g., eth0)")
@@ -49,6 +55,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.Uint64Var(&intervalLong, "interval", 0, "Capture duration in seconds (default 10)")
 	fs.BoolVar(&periodic, "periodic", false, "Enable periodic summary output")
 	fs.Uint64Var(&frequency, "frequency", 5, "Frequency in seconds for periodic output")
+	fs.BoolVar(&versionLong, "version", false, "Print version and exit")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
@@ -89,11 +96,12 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	}
 
 	return &Config{
-		Interface: selectedInterface,
-		Port:      selectedPort,
-		Debug:     selectedDebug,
-		Interval:  selectedInterval,
-		Periodic:  periodic,
-		Frequency: frequency,
+		Interface:   selectedInterface,
+		Port:        selectedPort,
+		Debug:       selectedDebug,
+		Interval:    selectedInterval,
+		Periodic:    periodic,
+		Frequency:   frequency,
+		ShowVersion: versionShort || versionLong,
 	}, nil
 }

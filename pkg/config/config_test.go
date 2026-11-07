@@ -100,3 +100,21 @@ func TestInvalidFrequency(t *testing.T) {
 		t.Fatal("expected error for frequency 0, got nil")
 	}
 }
+
+func TestVersionFlag(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--version"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.ShowVersion {
+		t.Errorf("expected ShowVersion true, got false")
+	}
+
+	cfgShort, err := ParseArgs([]string{"-v"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfgShort.ShowVersion {
+		t.Errorf("expected ShowVersion true, got false")
+	}
+}

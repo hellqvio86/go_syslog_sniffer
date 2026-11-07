@@ -1,6 +1,8 @@
 # Build stage
 FROM golang:1.25-bookworm AS builder
 
+ARG VERSION=dev
+
 # Install build dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -19,7 +21,11 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o syslog_sniffer main.go
+RUN CGO_ENABLED=1 go build -ldflags="-s -w -X github.com/hellqvio86/go_syslog_sniffer/pkg/config.Version=${VERSION}" -o syslog_sniffer main.go
+
+# Artifacts export stage (for clean host extraction)
+FROM scratch AS artifacts
+COPY --from=builder /app/syslog_sniffer /syslog_sniffer
 
 # Runtime stage (Debian-based for glibc and libpcap compatibility)
 FROM debian:bookworm-slim
