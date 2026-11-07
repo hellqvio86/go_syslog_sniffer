@@ -68,6 +68,9 @@ Options:
       --format <FORMAT>         Output format: json or ndjson (default: json)
   -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface
   -h, --help                    Print usage instructions
+
+Environment Variables:
+  DEBUG=1                       Enable debug diagnostic logging (equivalent to -d / --debug)
 ```
 
 ### JSON Schema (v0.2.0+)

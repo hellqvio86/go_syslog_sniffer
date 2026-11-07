@@ -131,7 +131,7 @@ This replaces my earlier review, which was written against the old single-file `
 ### [x] R5. Periodic output is not machine-friendly
 - It emits concatenated pretty-printed JSON documents, which are awkward for log shippers. Add `--format json|ndjson` (compact, one object per line). Intermediate reports put the nominal `--frequency` in `interval_seconds`, not the measured elapsed time; report `start`/`end` timestamps instead.
 
-### [ ] R6. CLI ergonomics
+### [x] R6. CLI ergonomics
 - Short/long flag pairs are defined twice with "long wins" precedence and 0-as-unset (see S2). The `DEBUG=1` environment variable is undocumented. Consider a single definition per option with an alias helper. Generated `-h` output lists short and long variants as separate flags with duplicated defaults.
 
 ---

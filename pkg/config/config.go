@@ -34,51 +34,91 @@ func Parse() (*Config, error) {
 	return ParseArgs(os.Args[1:], os.Stderr)
 }
 
+func stringVarAlias(fs *flag.FlagSet, p *string, long, short, val, usage string) {
+	fs.StringVar(p, long, val, usage)
+	if short != "" {
+		fs.StringVar(p, short, val, usage)
+	}
+}
+
+func intVarAlias(fs *flag.FlagSet, p *int, long, short string, val int, usage string) {
+	fs.IntVar(p, long, val, usage)
+	if short != "" {
+		fs.IntVar(p, short, val, usage)
+	}
+}
+
+func boolVarAlias(fs *flag.FlagSet, p *bool, long, short string, val bool, usage string) {
+	fs.BoolVar(p, long, val, usage)
+	if short != "" {
+		fs.BoolVar(p, short, val, usage)
+	}
+}
+
+func uint64VarAlias(fs *flag.FlagSet, p *uint64, long, short string, val uint64, usage string) {
+	fs.Uint64Var(p, long, val, usage)
+	if short != "" {
+		fs.Uint64Var(p, short, val, usage)
+	}
+}
+
 // ParseArgs parses a given argument slice into a Config.
 func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs := flag.NewFlagSet("syslog_sniffer", flag.ContinueOnError)
 	fs.SetOutput(errorOutput)
 
+	fs.Usage = func() {
+		fmt.Fprintf(errorOutput, "syslog_sniffer %s\n\nUsage:\n  syslog_sniffer [OPTIONS]\n\nOptions:\n", Version)
+		fmt.Fprintln(errorOutput, "  -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo, default: \"any\")")
+		fmt.Fprintln(errorOutput, "  -p, --port <PORT>             Syslog port to monitor (1-65535, default: 514)")
+		fmt.Fprintln(errorOutput, "  -t, --interval <SECONDS>      Capture duration in seconds (0 = unlimited, default: 10)")
+		fmt.Fprintln(errorOutput, "  -d, --debug                   Enable debug output")
+		fmt.Fprintln(errorOutput, "  -v, --version                 Print version and exit")
+		fmt.Fprintln(errorOutput, "  -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface")
+		fmt.Fprintln(errorOutput, "      --periodic                Enable periodic summary output")
+		fmt.Fprintln(errorOutput, "      --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)")
+		fmt.Fprintln(errorOutput, "      --format <FORMAT>         Output format: json or ndjson (default: json)")
+		fmt.Fprintln(errorOutput, "      --max-hosts <COUNT>       Maximum distinct hosts to track in memory (default: 10000)")
+		fmt.Fprintln(errorOutput, "      --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)")
+		fmt.Fprintln(errorOutput, "      --no-sample               Do not include sample messages in output")
+		fmt.Fprintln(errorOutput, "      --redact-sample           Redact message samples in output")
+		fmt.Fprintln(errorOutput, "      --list-interfaces         List available network interfaces and exit")
+		fmt.Fprintln(errorOutput, "  -h, --help                    Print usage instructions")
+		fmt.Fprintln(errorOutput, "\nEnvironment Variables:")
+		fmt.Fprintln(errorOutput, "  DEBUG=1                       Enable debug output (equivalent to -d / --debug)")
+	}
+
 	var (
-		intfShort, intfLong         string
-		portShort, portLong         int
-		debugShort, debugLong       bool
-		intervalShort, intervalLong uint64
-		periodic                    bool
-		frequency                   uint64
-		versionShort, versionLong   bool
-		maxHosts                    int
-		sampleBytes                 int
-		listInterfaces              bool
-		noSample                    bool
-		redactSample                bool
-		pcapFileShort, pcapFileLong string
-		format                      string
+		intf           string = "any"
+		port           int    = 514
+		debug          bool
+		interval       uint64 = 10
+		periodic       bool
+		frequency      uint64 = 5
+		version        bool
+		maxHosts       int = 10000
+		sampleBytes    int = 2048
+		listInterfaces bool
+		noSample       bool
+		redactSample   bool
+		pcapFile       string
+		format         string = "json"
 	)
 
-	// Short flags
-	fs.StringVar(&intfShort, "i", "", "Network interface to sniff (e.g., eth0)")
-	fs.IntVar(&portShort, "p", 0, "Syslog port to monitor (default 514)")
-	fs.BoolVar(&debugShort, "d", false, "Enable debug output")
-	fs.Uint64Var(&intervalShort, "t", 0, "Capture duration in seconds (default 10)")
-	fs.BoolVar(&versionShort, "v", false, "Print version and exit")
-	fs.StringVar(&pcapFileShort, "r", "", "Read packets from a pcap file instead of a live interface")
-
-	// Long flags (parities with rust_syslog_sniffer)
-	fs.StringVar(&intfLong, "interface", "", "Network interface to sniff (e.g., eth0)")
-	fs.IntVar(&portLong, "port", 0, "Syslog port to monitor (default 514)")
-	fs.BoolVar(&debugLong, "debug", false, "Enable debug output")
-	fs.Uint64Var(&intervalLong, "interval", 0, "Capture duration in seconds (default 10)")
+	stringVarAlias(fs, &intf, "interface", "i", "any", "Network interface to sniff")
+	intVarAlias(fs, &port, "port", "p", 514, "Syslog port to monitor")
+	boolVarAlias(fs, &debug, "debug", "d", false, "Enable debug output")
+	uint64VarAlias(fs, &interval, "interval", "t", 10, "Capture duration in seconds")
+	boolVarAlias(fs, &version, "version", "v", false, "Print version and exit")
+	stringVarAlias(fs, &pcapFile, "read-file", "r", "", "Read packets from a pcap file")
 	fs.BoolVar(&periodic, "periodic", false, "Enable periodic summary output")
 	fs.Uint64Var(&frequency, "frequency", 5, "Frequency in seconds for periodic output")
-	fs.BoolVar(&versionLong, "version", false, "Print version and exit")
-	fs.IntVar(&maxHosts, "max-hosts", 10000, "Maximum number of distinct hosts to track in memory (default 10000)")
-	fs.IntVar(&sampleBytes, "sample-bytes", 2048, "Maximum byte length of message sample retained per host (default 2048)")
+	fs.IntVar(&maxHosts, "max-hosts", 10000, "Maximum number of distinct hosts to track in memory")
+	fs.IntVar(&sampleBytes, "sample-bytes", 2048, "Maximum byte length of message sample retained per host")
 	fs.BoolVar(&listInterfaces, "list-interfaces", false, "List available network interfaces and exit")
 	fs.BoolVar(&noSample, "no-sample", false, "Do not include sample messages in output")
 	fs.BoolVar(&redactSample, "redact-sample", false, "Redact message samples in output")
-	fs.StringVar(&pcapFileLong, "read-file", "", "Read packets from a pcap file instead of a live interface")
-	fs.StringVar(&format, "format", "json", "Output format (json or ndjson, default json)")
+	fs.StringVar(&format, "format", "json", "Output format (json or ndjson)")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
@@ -90,67 +130,34 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		}, nil
 	}
 
-	// Check which flags were explicitly passed
-	var (
-		intervalSet bool
-		portSet     bool
-	)
+	// Check if interval was explicitly passed
+	var intervalSet bool
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "t" || f.Name == "interval" {
 			intervalSet = true
 		}
-		if f.Name == "p" || f.Name == "port" {
-			portSet = true
-		}
 	})
 
-	// Resolve interface (defaults to "any" on Linux)
-	selectedInterface := "any"
-	if intfLong != "" {
-		selectedInterface = intfLong
-	} else if intfShort != "" {
-		selectedInterface = intfShort
-	}
-
-	// Resolve port
-	selectedPort := 514
-	if portSet {
-		if portLong != 0 || (portShort == 0 && portLong != 0) {
-			selectedPort = portLong
-		} else {
-			selectedPort = portShort
-		}
-	}
-
-	if selectedPort < 1 || selectedPort > 65535 {
-		return nil, fmt.Errorf("port must be between 1 and 65535, got %d", selectedPort)
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("port must be between 1 and 65535, got %d", port)
 	}
 
 	const maxAllowedDuration = 1 << 31
 
-	// Resolve interval
-	var selectedInterval uint64
 	if intervalSet {
-		if intervalLong != 0 || (intervalShort == 0 && intervalLong != 0) {
-			selectedInterval = intervalLong
-		} else {
-			selectedInterval = intervalShort
-		}
-		if selectedInterval > maxAllowedDuration {
-			return nil, fmt.Errorf("interval %d exceeds maximum supported limit (%d seconds)", selectedInterval, maxAllowedDuration)
+		if interval > maxAllowedDuration {
+			return nil, fmt.Errorf("interval %d exceeds maximum supported limit (%d seconds)", interval, maxAllowedDuration)
 		}
 	} else {
 		if periodic {
-			selectedInterval = 0 // periodic defaults to unlimited
+			interval = 0 // periodic defaults to unlimited
 		} else {
-			selectedInterval = 10 // standard mode defaults to 10s
+			interval = 10 // standard mode defaults to 10s
 		}
 	}
 
-	// Resolve debug
-	selectedDebug := debugShort || debugLong
-	if !selectedDebug && os.Getenv("DEBUG") == "1" {
-		selectedDebug = true
+	if !debug && os.Getenv("DEBUG") == "1" {
+		debug = true
 	}
 
 	if frequency == 0 {
@@ -175,27 +182,20 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		return nil, fmt.Errorf("invalid output format %q: must be 'json' or 'ndjson'", format)
 	}
 
-	selectedPcapFile := ""
-	if pcapFileLong != "" {
-		selectedPcapFile = pcapFileLong
-	} else if pcapFileShort != "" {
-		selectedPcapFile = pcapFileShort
-	}
-
 	return &Config{
-		Interface:      selectedInterface,
-		Port:           selectedPort,
-		Debug:          selectedDebug,
-		Interval:       selectedInterval,
+		Interface:      intf,
+		Port:           port,
+		Debug:          debug,
+		Interval:       interval,
 		Periodic:       periodic,
 		Frequency:      frequency,
-		ShowVersion:    versionShort || versionLong,
+		ShowVersion:    version,
 		MaxHosts:       maxHosts,
 		SampleBytes:    sampleBytes,
 		ListInterfaces: listInterfaces,
 		NoSample:       noSample,
 		RedactSample:   redactSample,
-		PcapFile:       selectedPcapFile,
+		PcapFile:       pcapFile,
 		Format:         selectedFormat,
 	}, nil
 }

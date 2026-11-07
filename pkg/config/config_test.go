@@ -2,6 +2,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
+	"flag"
+	"strings"
 	"testing"
 )
 
@@ -278,5 +281,43 @@ func TestParseFormatFlag(t *testing.T) {
 	_, err = ParseArgs([]string{"--format", "xml"}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for invalid format 'xml', got nil")
+	}
+}
+
+func TestCLIErgonomics_R6(t *testing.T) {
+	// 1. Grouped help output from -h
+	var helpBuf bytes.Buffer
+	_, err := ParseArgs([]string{"-h"}, &helpBuf)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("expected flag.ErrHelp, got %v", err)
+	}
+	helpStr := helpBuf.String()
+	if !strings.Contains(helpStr, "-i, --interface <INTERFACE>") {
+		t.Errorf("expected grouped interface flag in help, got:\n%s", helpStr)
+	}
+	if !strings.Contains(helpStr, "-p, --port <PORT>") {
+		t.Errorf("expected grouped port flag in help, got:\n%s", helpStr)
+	}
+	if !strings.Contains(helpStr, "DEBUG=1") {
+		t.Errorf("expected DEBUG=1 environment variable in help, got:\n%s", helpStr)
+	}
+
+	// 2. DEBUG=1 environment variable
+	t.Setenv("DEBUG", "1")
+	cfgEnv, err := ParseArgs([]string{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfgEnv.Debug {
+		t.Errorf("expected Debug true from DEBUG=1 env var, got false")
+	}
+
+	// 3. Flag overrides default port and interface via short or long
+	cfgShort, err := ParseArgs([]string{"-p", "601", "-i", "enp1s0"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgShort.Port != 601 || cfgShort.Interface != "enp1s0" {
+		t.Errorf("unexpected short flag values: port=%d intf=%s", cfgShort.Port, cfgShort.Interface)
 	}
 }
