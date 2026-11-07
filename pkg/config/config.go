@@ -8,7 +8,7 @@ import (
 )
 
 // Version holds the application version, injectible via ldflags.
-var Version = "0.1.0"
+var Version = "0.2.0"
 
 // Config holds the runtime configuration parameters for syslog_sniffer.
 type Config struct {
@@ -19,6 +19,8 @@ type Config struct {
 	Periodic    bool
 	Frequency   uint64
 	ShowVersion bool
+	MaxHosts    int
+	SampleBytes int
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -39,6 +41,8 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		periodic                    bool
 		frequency                   uint64
 		versionShort, versionLong   bool
+		maxHosts                    int
+		sampleBytes                 int
 	)
 
 	// Short flags
@@ -56,6 +60,8 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.BoolVar(&periodic, "periodic", false, "Enable periodic summary output")
 	fs.Uint64Var(&frequency, "frequency", 5, "Frequency in seconds for periodic output")
 	fs.BoolVar(&versionLong, "version", false, "Print version and exit")
+	fs.IntVar(&maxHosts, "max-hosts", 10000, "Maximum number of distinct hosts to track in memory (default 10000)")
+	fs.IntVar(&sampleBytes, "sample-bytes", 2048, "Maximum byte length of message sample retained per host (default 2048)")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
@@ -95,6 +101,13 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		return nil, fmt.Errorf("frequency must be greater than 0")
 	}
 
+	if maxHosts <= 0 {
+		maxHosts = 10000
+	}
+	if sampleBytes <= 0 {
+		sampleBytes = 2048
+	}
+
 	return &Config{
 		Interface:   selectedInterface,
 		Port:        selectedPort,
@@ -103,5 +116,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		Periodic:    periodic,
 		Frequency:   frequency,
 		ShowVersion: versionShort || versionLong,
+		MaxHosts:    maxHosts,
+		SampleBytes: sampleBytes,
 	}, nil
 }

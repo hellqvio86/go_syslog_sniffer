@@ -63,17 +63,29 @@ func TestRunSniffer_Basic(t *testing.T) {
 		t.Fatalf("expected 2 hosts, got %d", len(summary.Hosts))
 	}
 
-	hostA := summary.Hosts["hostA"]
+	hostA := summary.Hosts["10.0.0.1"]
 	if hostA.Count != 2 {
 		t.Errorf("expected hostA count 2, got %d", hostA.Count)
+	}
+	if hostA.Hostname != "hostA" {
+		t.Errorf("expected hostA Hostname 'hostA', got %q", hostA.Hostname)
+	}
+	if hostA.SrcIP != "10.0.0.1" {
+		t.Errorf("expected hostA SrcIP '10.0.0.1', got %q", hostA.SrcIP)
 	}
 	if !strings.Contains(hostA.Sample, "Test message 1") {
 		t.Errorf("expected hostA sample to be first message, got %q", hostA.Sample)
 	}
 
-	hostB := summary.Hosts["hostB"]
+	hostB := summary.Hosts["10.0.0.2"]
 	if hostB.Count != 1 {
 		t.Errorf("expected hostB count 1, got %d", hostB.Count)
+	}
+	if hostB.Hostname != "hostB" {
+		t.Errorf("expected hostB Hostname 'hostB', got %q", hostB.Hostname)
+	}
+	if hostB.SrcIP != "10.0.0.2" {
+		t.Errorf("expected hostB SrcIP '10.0.0.2', got %q", hostB.SrcIP)
 	}
 	if !strings.Contains(hostB.Sample, "login: ok") {
 		t.Errorf("expected hostB sample, got %q", hostB.Sample)

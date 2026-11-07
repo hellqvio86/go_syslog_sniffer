@@ -26,9 +26,31 @@ var (
 	// Group 3 captures the HOSTNAME.
 	rfc3164Regex = regexp.MustCompile(`^<(\d{1,3})>([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+`)
 
+	// rfc3164ISORegex matches rsyslog high-precision ISO-timestamp RFC 3164 header:
+	// <PRI>TIMESTAMP HOSTNAME MSG
+	// Group 3 captures the HOSTNAME.
+	rfc3164ISORegex = regexp.MustCompile(`^<(\d{1,3})>(\d{4}-\d{2}-\d{2}T\S+)\s+(\S+)\s+`)
+
 	// headerPrefixRegex matches optional RFC 6587 octet count followed by <PRI>.
 	headerPrefixRegex = regexp.MustCompile(`^(?:(\d+)\s+)?<(\d{1,3})>`)
 )
+
+func cleanHostname(raw string) string {
+	if raw == "" || raw == "-" {
+		return ""
+	}
+	if len(raw) > 255 {
+		raw = raw[:255]
+	}
+	for i := 0; i < len(raw); i++ {
+		b := raw[i]
+		// Must be printable ASCII and non-whitespace
+		if b < 33 || b > 126 {
+			return ""
+		}
+	}
+	return raw
+}
 
 // SyslogPacket represents a parsed syslog packet.
 type SyslogPacket struct {
@@ -68,9 +90,11 @@ func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
 	var hostname string
 
 	if matches := rfc5424Regex.FindStringSubmatch(msg); len(matches) > 4 {
-		hostname = matches[4]
+		hostname = cleanHostname(matches[4])
 	} else if matches := rfc3164Regex.FindStringSubmatch(msg); len(matches) > 3 {
-		hostname = matches[3]
+		hostname = cleanHostname(matches[3])
+	} else if matches := rfc3164ISORegex.FindStringSubmatch(msg); len(matches) > 3 {
+		hostname = cleanHostname(matches[3])
 	}
 
 	return &SyslogPacket{

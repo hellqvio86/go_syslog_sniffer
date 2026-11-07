@@ -29,6 +29,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Frequency != 5 {
 		t.Errorf("expected frequency 5, got %d", cfg.Frequency)
 	}
+	if cfg.MaxHosts != 10000 {
+		t.Errorf("expected MaxHosts 10000, got %d", cfg.MaxHosts)
+	}
+	if cfg.SampleBytes != 2048 {
+		t.Errorf("expected SampleBytes 2048, got %d", cfg.SampleBytes)
+	}
 }
 
 func TestParseLongArgs(t *testing.T) {
@@ -116,5 +122,19 @@ func TestVersionFlag(t *testing.T) {
 	}
 	if !cfgShort.ShowVersion {
 		t.Errorf("expected ShowVersion true, got false")
+	}
+}
+
+func TestCustomLimitsArgs(t *testing.T) {
+	args := []string{"--max-hosts", "500", "--sample-bytes", "1024"}
+	cfg, err := ParseArgs(args, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MaxHosts != 500 {
+		t.Errorf("expected MaxHosts 500, got %d", cfg.MaxHosts)
+	}
+	if cfg.SampleBytes != 1024 {
+		t.Errorf("expected SampleBytes 1024, got %d", cfg.SampleBytes)
 	}
 }

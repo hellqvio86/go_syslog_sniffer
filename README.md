@@ -57,19 +57,26 @@ Options:
   -p, --port <PORT>             Syslog port to monitor (default: 514)
   -t, --interval <SECONDS>      Duration in seconds to capture (default: 10)
   -d, --debug                   Enable debug diagnostic logging
+  -v, --version                 Print version and exit
       --periodic                Enable periodic summary output
       --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)
+      --max-hosts <COUNT>       Maximum distinct hosts to track in memory (default: 10000)
+      --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)
   -h, --help                    Print usage instructions
 ```
 
-### Example Output
+### JSON Schema (v0.2.0+)
+
+Entries in `hosts` are keyed by the originating source IP address to prevent sender-spoofed hostname collisions or unbounded map expansion. The claimed hostname extracted from RFC 5424 / RFC 3164 headers is preserved in the `hostname` field.
 
 ```json
 {
   "interval_seconds": 10,
   "hosts": {
-    "mymachine.example.com": {
+    "192.168.1.10": {
       "count": 42,
+      "src_ip": "192.168.1.10",
+      "hostname": "mymachine.example.com",
       "sample": "<165>1 2026-11-07T12:00:00.000Z mymachine.example.com appname[123] - ID47 [exampleSDID@32473] Sample log entry"
     }
   }

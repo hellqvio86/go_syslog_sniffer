@@ -51,7 +51,7 @@ This replaces my earlier review, which was written against the old single-file `
 - **Fix:** default to `dst port N`; optionally `--direction dst|src|both`. Multiple ports: `--port 514,601` → `(dst port 514 or dst port 601)`.
 - **Acceptance:** test with a synthetic TCP handshake plus data plus ACKs: only the sender is counted with the default. Unit-test the generated filter string.
 
-### [ ] B4. Host key is sender-controlled and the real source address is lost **[probed]**
+### [x] B4. Host key is sender-controlled and the real source address is lost **[probed]**
 - **Where:** `app.RunSniffer` (hostname selection), `stats.StatsTracker`.
 - **Problem:** Entries are keyed by the *hostname claimed inside the message*. Consequences:
   - One IP can create unlimited keys by varying the hostname field (see S1), and many machines claiming the same name merge into one entry.

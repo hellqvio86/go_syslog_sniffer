@@ -36,6 +36,20 @@ func TestParseSyslogPacket_Table(t *testing.T) {
 			wantMessage: "<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - A message",
 		},
 		{
+			name:        "valid RFC 5424 with NILVALUE hostname -",
+			input:       []byte("<165>1 2026-11-07T12:00:00Z - app 1 - - msg"),
+			wantValid:   true,
+			wantHost:    "",
+			wantMessage: "<165>1 2026-11-07T12:00:00Z - app 1 - - msg",
+		},
+		{
+			name:        "valid RFC 3164 with ISO-8601 high-precision timestamp",
+			input:       []byte("<13>2026-11-07T12:00:00+01:00 myhost app: msg"),
+			wantValid:   true,
+			wantHost:    "myhost",
+			wantMessage: "<13>2026-11-07T12:00:00+01:00 myhost app: msg",
+		},
+		{
 			name:        "valid basic PRI only",
 			input:       []byte("<13>Hello world"),
 			wantValid:   true,
