@@ -145,7 +145,7 @@ This replaces my earlier review, which was written against the old single-file `
 ### [x] T2. Capture conversion
 - `NextPacket`'s packet-to-`PacketData` logic (the part that matters) has no tests; capture coverage is 60% from the mock and the invalid-interface test only. Build frames with `gopacket.SerializeLayers` (appendix) for: TCP pure ACK, SYN-ACK, empty UDP, UDP with payload, IPv6, 802.1Q VLAN.
 
-### [ ] T3. App
+### [x] T3. App
 - Add tests for: source returns EOF (B5), overflow cap (S1), periodic emits multiple reports (S2), golden JSON for the schema, `--no-sample` (S6). Add a test for `main` exit codes via `exec` of the built binary (version, bad flag, unknown interface).
 
 ---

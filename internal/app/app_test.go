@@ -573,3 +573,123 @@ func TestRunSniffer_R5FormatAndTimestamps(t *testing.T) {
 		t.Errorf("expected pretty multiline json output, got %d lines: %s", len(jsonLines), stdout2.String())
 	}
 }
+
+func TestJSONSummary_GoldenSchema(t *testing.T) {
+	summary := &stats.JSONSummary{
+		StartTime:       "2026-11-07T12:00:00Z",
+		EndTime:         "2026-11-07T12:00:10Z",
+		IntervalSeconds: 10,
+		Hosts: map[string]stats.HostStats{
+			"192.168.1.10": {
+				Count:           42,
+				Sample:          "<165>1 2026-11-07T12:00:00Z web-01 app 1 - - Hello syslog",
+				SampleTruncated: false,
+				TLSSuspected:    false,
+				Hostname:        "web-01",
+				SrcIP:           "192.168.1.10",
+			},
+		},
+		OverflowEvents: 5,
+		Ignored: stats.IgnoredCounters{
+			NoPayload:        3,
+			NotSyslog:        2,
+			NonUTF8Sanitized: 1,
+		},
+		CaptureStats: &stats.CaptureStats{
+			PacketsReceived:  100,
+			PacketsDropped:   2,
+			PacketsIfDropped: 1,
+		},
+	}
+
+	b, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal summary: %v", err)
+	}
+
+	// Verify against golden JSON structure
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("failed to unmarshal JSON into map: %v", err)
+	}
+
+	expectedKeys := []string{
+		"start_time", "end_time", "interval_seconds", "hosts",
+		"overflow_events", "ignored", "capture_stats",
+	}
+	for _, key := range expectedKeys {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("missing expected top-level key %q in JSON schema", key)
+		}
+	}
+
+	hostsMap, ok := raw["hosts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'hosts' to be a map")
+	}
+	h1, ok := hostsMap["192.168.1.10"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected host entry '192.168.1.10' in hosts map")
+	}
+	expectedHostKeys := []string{"count", "sample", "hostname", "src_ip"}
+	for _, k := range expectedHostKeys {
+		if _, ok := h1[k]; !ok {
+			t.Errorf("missing expected host key %q in host stats", k)
+		}
+	}
+
+	ignoredMap, ok := raw["ignored"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'ignored' to be a map")
+	}
+	for _, k := range []string{"no_payload", "not_syslog", "non_utf8_sanitized"} {
+		if _, ok := ignoredMap[k]; !ok {
+			t.Errorf("missing expected ignored key %q", k)
+		}
+	}
+
+	capMap, ok := raw["capture_stats"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'capture_stats' to be a map")
+	}
+	for _, k := range []string{"received", "dropped", "if_dropped"} {
+		if _, ok := capMap[k]; !ok {
+			t.Errorf("missing expected capture_stats key %q", k)
+		}
+	}
+}
+
+func TestRunSniffer_OverflowCap(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  1,
+		MaxHosts:  3,
+	}
+
+	var packets []*capture.PacketData
+	for i := 1; i <= 10; i++ {
+		packets = append(packets, &capture.PacketData{
+			Data:  []byte(fmt.Sprintf("<13>Oct 11 22:14:15 host%d app: msg", i)),
+			SrcIP: netip.MustParseAddr(fmt.Sprintf("10.0.0.%d", i)),
+		})
+	}
+
+	mock := testutil.NewMockPacketSource(packets)
+	mock.ReturnEOFOnExhaust = true
+
+	var stdout, stderr bytes.Buffer
+	_ = RunSniffer(context.Background(), cfg, mock, &stdout, &stderr)
+
+	var summary stats.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if len(summary.Hosts) != 3 {
+		t.Errorf("expected exactly 3 hosts capped by MaxHosts=3, got %d", len(summary.Hosts))
+	}
+	if summary.OverflowEvents != 7 {
+		t.Errorf("expected 7 overflow events, got %d", summary.OverflowEvents)
+	}
+}
