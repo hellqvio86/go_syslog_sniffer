@@ -60,7 +60,7 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		source, err = capture.NewPcapPacketSource(cfg.Interface, cfg.Port)
+		source, err = capture.NewPcapPacketSourceWithOptions(cfg.Interface, cfg.Port, "dst", cfg.Promiscuous)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to setup capture: %v\n", err)
 			os.Exit(1)

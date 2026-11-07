@@ -17,7 +17,7 @@ import (
 var ErrCaptureClosed = errors.New("capture closed")
 
 const (
-	defaultSnapLen    = 262144
+	defaultSnapLen    = 65535
 	defaultBufferSize = 8 * 1024 * 1024 // 8 MB buffer for busy collectors
 	readTimeout       = 250 * time.Millisecond
 )
@@ -92,13 +92,18 @@ func formatInterfaceError(intf string, phase string, err error) error {
 	return fmt.Errorf("failed to %s interface %s: %w", phase, intf, err)
 }
 
-// NewPcapPacketSource opens a live pcap handle on the given interface and port with default "dst" direction.
+// NewPcapPacketSource opens a live pcap handle on the given interface and port with default "dst" direction and promisc false.
 func NewPcapPacketSource(intf string, port int) (*PcapPacketSource, error) {
-	return NewPcapPacketSourceWithDirection(intf, port, "dst")
+	return NewPcapPacketSourceWithOptions(intf, port, "dst", false)
 }
 
-// NewPcapPacketSourceWithDirection opens a live pcap handle with explicit direction ("dst", "src", or "both").
+// NewPcapPacketSourceWithDirection opens a live pcap handle with explicit direction ("dst", "src", or "both") and promisc false.
 func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (*PcapPacketSource, error) {
+	return NewPcapPacketSourceWithOptions(intf, port, direction, false)
+}
+
+// NewPcapPacketSourceWithOptions opens a live pcap handle with explicit direction and promiscuous mode setting.
+func NewPcapPacketSourceWithOptions(intf string, port int, direction string, promisc bool) (*PcapPacketSource, error) {
 	inactive, err := pcap.NewInactiveHandle(intf)
 	if err != nil {
 		return nil, formatInterfaceError(intf, "open", err)
@@ -108,7 +113,7 @@ func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (
 	if err := inactive.SetSnapLen(defaultSnapLen); err != nil {
 		return nil, fmt.Errorf("failed to set snaplen on interface %s: %w", intf, err)
 	}
-	if err := inactive.SetPromisc(true); err != nil {
+	if err := inactive.SetPromisc(promisc); err != nil {
 		return nil, fmt.Errorf("failed to set promisc on interface %s: %w", intf, err)
 	}
 	if err := inactive.SetTimeout(readTimeout); err != nil {

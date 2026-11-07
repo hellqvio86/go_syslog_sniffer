@@ -15,9 +15,8 @@ rm -f sniffer_output_periodic.txt
 docker run --rm \
   --name sniffer_periodic_test_go \
   --network host \
+  --cap-drop=ALL \
   --cap-add=NET_RAW \
-  --cap-add=NET_ADMIN \
-  --user root \
   syslog_sniffer:latest \
   --interface lo \
   --port 5517 \

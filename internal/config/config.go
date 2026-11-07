@@ -27,6 +27,7 @@ type Config struct {
 	RedactSample   bool
 	PcapFile       string
 	Format         string
+	Promiscuous    bool
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -82,6 +83,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		fmt.Fprintln(errorOutput, "      --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)")
 		fmt.Fprintln(errorOutput, "      --no-sample               Do not include sample messages in output")
 		fmt.Fprintln(errorOutput, "      --redact-sample           Redact message samples in output")
+		fmt.Fprintln(errorOutput, "      --promisc                 Enable promiscuous mode on network interface (default: false)")
 		fmt.Fprintln(errorOutput, "      --list-interfaces         List available network interfaces and exit")
 		fmt.Fprintln(errorOutput, "  -h, --help                    Print usage instructions")
 		fmt.Fprintln(errorOutput, "\nEnvironment Variables:")
@@ -101,6 +103,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		listInterfaces bool
 		noSample       bool
 		redactSample   bool
+		promisc        bool
 		pcapFile       string
 		format         string = "json"
 	)
@@ -118,6 +121,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.BoolVar(&listInterfaces, "list-interfaces", false, "List available network interfaces and exit")
 	fs.BoolVar(&noSample, "no-sample", false, "Do not include sample messages in output")
 	fs.BoolVar(&redactSample, "redact-sample", false, "Redact message samples in output")
+	fs.BoolVar(&promisc, "promisc", false, "Enable promiscuous mode on network interface")
 	fs.StringVar(&format, "format", "json", "Output format (json or ndjson)")
 
 	if err := fs.Parse(arguments); err != nil {
@@ -197,5 +201,6 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		RedactSample:   redactSample,
 		PcapFile:       pcapFile,
 		Format:         selectedFormat,
+		Promiscuous:    promisc,
 	}, nil
 }

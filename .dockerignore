@@ -1,0 +1,10 @@
+.git
+.githooks
+.github
+coverage.*
+dist/
+sniffer
+syslog_sniffer
+syslog_sniffer_test_bin
+sniffer_output_*.txt
+*.pcap

@@ -128,6 +128,24 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
+func TestPromiscFlag(t *testing.T) {
+	cfgDefault, err := ParseArgs([]string{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgDefault.Promiscuous {
+		t.Errorf("expected default Promiscuous false, got true")
+	}
+
+	cfgPromisc, err := ParseArgs([]string{"--promisc"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfgPromisc.Promiscuous {
+		t.Errorf("expected Promiscuous true with --promisc, got false")
+	}
+}
+
 func TestS3_PortValidationAndListInterfaces(t *testing.T) {
 	// Invalid port < 1
 	_, err := ParseArgs([]string{"-p", "0"}, &bytes.Buffer{})

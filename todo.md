@@ -168,7 +168,7 @@ This replaces my earlier review, which was written against the old single-file `
 ### [x] C4. Missing checks
 - Add to CI: `golangci-lint` (or `staticcheck`), `govulncheck ./...`, `go mod tidy` + `git diff --exit-code`, `hadolint Dockerfile`, a container scan (Trivy/Grype), SBOM and provenance (`sbom: true`, `provenance: mode=max` on `docker/build-push-action`) and image signing (cosign keyless). The README positions this as parity with `rust_syslog_sniffer`, which has SBOM generation; this repo has no `make sbom`.
 
-### [ ] C5. Dockerfile
+### [x] C5. Dockerfile
 - Runtime stage installs `libpcap-dev` (headers and toolchain dependencies); the runtime library package (`libpcap0.8` on bookworm) is enough.
 - Runs as root; there is no `USER`. Try `setcap cap_net_raw+ep` on the binary and a non-root user; document `--cap-drop=ALL --cap-add=NET_RAW`.
 - `--cap-add=NET_ADMIN` is recommended everywhere, but the code only needs raw capture; NET_ADMIN is probably unnecessary once promiscuous mode is optional (N1). **[verify]** by running with only `NET_RAW`.
@@ -183,7 +183,7 @@ This replaces my earlier review, which was written against the old single-file `
 ### [ ] C7. Dependency health **[verify]**
 - `github.com/google/gopacket v1.1.19` is pinned. Check whether the upstream is still maintained and whether the `github.com/gopacket/gopacket` fork is the better dependency; run `govulncheck`. `golang.org/x/net` is only an indirect requirement (bumped by Dependabot).
 
-### [ ] N1. Promiscuous mode is hard-coded
+### [x] N1. Promiscuous mode is hard-coded
 - `pcap.OpenLive(intf, defaultSnapLen, true, readTimeout)`. Add `--promisc` (default off: the typical use is a collector sniffing its own traffic, and promisc widens what's captured). Lower `snaplen` to e.g. 65535 to match UDP's maximum payload.
 
 ---

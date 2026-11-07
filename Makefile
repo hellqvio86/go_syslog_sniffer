@@ -64,15 +64,15 @@ docker-build: ## Build Docker image
 
 docker-run: ## Run Docker container
 	$(DOCKER) run --rm -it \
+		--cap-drop=ALL \
 		--cap-add=NET_RAW \
-		--cap-add=NET_ADMIN \
 		--network host \
 		$(IMAGE_NAME):$(IMAGE_TAG) $(ARGS)
 
 docker-run-interactive: ## Run Docker container interactively with shell
 	$(DOCKER) run --rm -it \
+		--cap-drop=ALL \
 		--cap-add=NET_RAW \
-		--cap-add=NET_ADMIN \
 		--network host \
 		--entrypoint /bin/sh \
 		$(IMAGE_NAME):$(IMAGE_TAG)
