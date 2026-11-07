@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -17,7 +18,7 @@ import (
 func main() {
 	cfg, err := config.Parse()
 	if err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -49,10 +50,21 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	source, err := capture.NewPcapPacketSource(cfg.Interface, cfg.Port)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to setup capture: %v\n", err)
-		os.Exit(1)
+	var (
+		source capture.PacketSource
+	)
+	if cfg.PcapFile != "" {
+		source, err = capture.NewOfflinePacketSource(cfg.PcapFile, cfg.Port, "dst")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to open pcap file: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		source, err = capture.NewPcapPacketSource(cfg.Interface, cfg.Port)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to setup capture: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	defer source.Close()
 

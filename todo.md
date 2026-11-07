@@ -116,7 +116,7 @@ This replaces my earlier review, which was written against the old single-file `
 - `gopacket.NewPacketSource` is used with default `DecodeOptions` (copies each packet, decodes all layers eagerly); `NextPacket` allocates a `time.After` timer on every call. No benchmark exists.
 - **Fix:** set `DecodeOptions{Lazy: true, NoCopy: true}` (copy the payload before storing), reuse one `time.Timer` or restructure around the channel/ctx, add `BenchmarkParseSyslogPacket` and a replay benchmark over a synthetic 100k-packet pcap; either keep the README claim with numbers or drop it.
 
-### [ ] R2. Test double in production package; add offline source
+### [x] R2. Test double in production package; add offline source
 - `MockPacketSource` is defined in `capture.go` (non-test file), so it is exported API and compiled into the binary. Move it to a `_test.go` file or `internal/testutil`.
 - Add `OfflinePacketSource` (`pcap.OpenOffline`) and a `-r file.pcap` flag. It enables fixtures, regression tests and analysing captures from other machines.
 

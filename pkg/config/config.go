@@ -24,6 +24,7 @@ type Config struct {
 	ListInterfaces bool
 	NoSample       bool
 	RedactSample   bool
+	PcapFile       string
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -49,6 +50,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		listInterfaces              bool
 		noSample                    bool
 		redactSample                bool
+		pcapFileShort, pcapFileLong string
 	)
 
 	// Short flags
@@ -57,6 +59,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.BoolVar(&debugShort, "d", false, "Enable debug output")
 	fs.Uint64Var(&intervalShort, "t", 0, "Capture duration in seconds (default 10)")
 	fs.BoolVar(&versionShort, "v", false, "Print version and exit")
+	fs.StringVar(&pcapFileShort, "r", "", "Read packets from a pcap file instead of a live interface")
 
 	// Long flags (parities with rust_syslog_sniffer)
 	fs.StringVar(&intfLong, "interface", "", "Network interface to sniff (e.g., eth0)")
@@ -71,6 +74,7 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.BoolVar(&listInterfaces, "list-interfaces", false, "List available network interfaces and exit")
 	fs.BoolVar(&noSample, "no-sample", false, "Do not include sample messages in output")
 	fs.BoolVar(&redactSample, "redact-sample", false, "Redact message samples in output")
+	fs.StringVar(&pcapFileLong, "read-file", "", "Read packets from a pcap file instead of a live interface")
 
 	if err := fs.Parse(arguments); err != nil {
 		return nil, err
@@ -159,6 +163,13 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		sampleBytes = 2048
 	}
 
+	selectedPcapFile := ""
+	if pcapFileLong != "" {
+		selectedPcapFile = pcapFileLong
+	} else if pcapFileShort != "" {
+		selectedPcapFile = pcapFileShort
+	}
+
 	return &Config{
 		Interface:      selectedInterface,
 		Port:           selectedPort,
@@ -172,5 +183,6 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 		ListInterfaces: listInterfaces,
 		NoSample:       noSample,
 		RedactSample:   redactSample,
+		PcapFile:       selectedPcapFile,
 	}, nil
 }

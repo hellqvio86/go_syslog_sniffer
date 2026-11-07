@@ -207,40 +207,22 @@ func (p *PcapPacketSource) Close() error {
 	return nil
 }
 
-// MockPacketSource is an in-memory packet source for testing.
-type MockPacketSource struct {
-	packets            []*PacketData
-	idx                int
-	ReturnEOFOnExhaust bool
-	MockStats          *Stats
-}
-
-// NewMockPacketSource creates a mock packet source with a predetermined packet sequence.
-func NewMockPacketSource(packets []*PacketData) *MockPacketSource {
-	return &MockPacketSource{
-		packets: packets,
+// NewOfflinePacketSource opens a saved pcap file and sets a BPF filter for the specified port and direction.
+func NewOfflinePacketSource(pcapFile string, port int, direction string) (*PcapPacketSource, error) {
+	handle, err := pcap.OpenOffline(pcapFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pcap file %s: %w", pcapFile, err)
 	}
-}
 
-// Stats returns the configured MockStats.
-func (m *MockPacketSource) Stats() (*Stats, error) {
-	return m.MockStats, nil
-}
-
-// NextPacket returns the next mock packet or (nil, nil) (or io.EOF if ReturnEOFOnExhaust is set) when exhausted.
-func (m *MockPacketSource) NextPacket() (*PacketData, error) {
-	if m.idx >= len(m.packets) {
-		if m.ReturnEOFOnExhaust {
-			return nil, io.EOF
-		}
-		return nil, nil
+	filter := BuildBPFFilter(direction, port)
+	if err := handle.SetBPFFilter(filter); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("failed to set BPF filter %q on %s: %w", filter, pcapFile, err)
 	}
-	pkt := m.packets[m.idx]
-	m.idx++
-	return pkt, nil
-}
 
-// Close is a no-op for MockPacketSource.
-func (m *MockPacketSource) Close() error {
-	return nil
+	pktSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	return &PcapPacketSource{
+		handle:  handle,
+		packets: pktSource.Packets(),
+	}, nil
 }

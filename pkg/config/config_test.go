@@ -234,3 +234,23 @@ func TestParseSampleFlags(t *testing.T) {
 		t.Errorf("expected RedactSample true, got false")
 	}
 }
+
+func TestParseReadFileFlag(t *testing.T) {
+	// 1. Short flag -r
+	cfgShort, err := ParseArgs([]string{"-r", "capture.pcap"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgShort.PcapFile != "capture.pcap" {
+		t.Errorf("expected PcapFile 'capture.pcap', got %q", cfgShort.PcapFile)
+	}
+
+	// 2. Long flag --read-file
+	cfgLong, err := ParseArgs([]string{"--read-file", "traffic.pcap"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgLong.PcapFile != "traffic.pcap" {
+		t.Errorf("expected PcapFile 'traffic.pcap', got %q", cfgLong.PcapFile)
+	}
+}

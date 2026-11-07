@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hellqvio86/go_syslog_sniffer/internal/testutil"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/capture"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/config"
 	"github.com/hellqvio86/go_syslog_sniffer/pkg/stats"
@@ -37,7 +38,7 @@ func TestRunSniffer_Basic(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -107,7 +108,7 @@ func TestRunSniffer_Debug(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -138,7 +139,7 @@ func TestRunSniffer_ContextCancel(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -179,7 +180,7 @@ func TestRunSniffer_EOFSource(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	mockSource.ReturnEOFOnExhaust = true
 
 	var stdout bytes.Buffer
@@ -315,7 +316,7 @@ func TestRunSniffer_MultiMessageTCPSegment(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	mockSource.ReturnEOFOnExhaust = true
 
 	var stdout bytes.Buffer
@@ -353,7 +354,7 @@ func TestRunSniffer_TLSDetected(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	mockSource.ReturnEOFOnExhaust = true
 
 	var stdout bytes.Buffer
@@ -394,7 +395,7 @@ func TestRunSniffer_S6DebugEscaping(t *testing.T) {
 		},
 	}
 
-	mockSource := capture.NewMockPacketSource(packets)
+	mockSource := testutil.NewMockPacketSource(packets)
 	mockSource.ReturnEOFOnExhaust = true
 
 	var stdout bytes.Buffer
@@ -435,7 +436,7 @@ func TestRunSniffer_S6NoSampleAndRedact(t *testing.T) {
 		Interval:  1,
 		NoSample:  true,
 	}
-	mock1 := capture.NewMockPacketSource(packets)
+	mock1 := testutil.NewMockPacketSource(packets)
 	mock1.ReturnEOFOnExhaust = true
 	var stdout1, stderr1 bytes.Buffer
 	_ = RunSniffer(context.Background(), cfgNoSample, mock1, &stdout1, &stderr1)
@@ -454,7 +455,7 @@ func TestRunSniffer_S6NoSampleAndRedact(t *testing.T) {
 		Interval:     1,
 		RedactSample: true,
 	}
-	mock2 := capture.NewMockPacketSource(packets)
+	mock2 := testutil.NewMockPacketSource(packets)
 	mock2.ReturnEOFOnExhaust = true
 	var stdout2, stderr2 bytes.Buffer
 	_ = RunSniffer(context.Background(), cfgRedact, mock2, &stdout2, &stderr2)
@@ -482,7 +483,7 @@ func TestRunSniffer_S4CaptureStats(t *testing.T) {
 		},
 	}
 
-	mock := capture.NewMockPacketSource(packets)
+	mock := testutil.NewMockPacketSource(packets)
 	mock.ReturnEOFOnExhaust = true
 	mock.MockStats = &capture.Stats{
 		PacketsReceived:  250,

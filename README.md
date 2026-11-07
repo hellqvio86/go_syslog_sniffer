@@ -65,6 +65,7 @@ Options:
       --no-sample               Do not include sample messages in output
       --redact-sample           Redact message samples in output
       --list-interfaces         List available network interfaces and exit
+  -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface
   -h, --help                    Print usage instructions
 ```
 

@@ -2,12 +2,16 @@ package capture
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/google/gopacket/pcapgo"
 )
 
 func buildFrame(t *testing.T, l4 gopacket.SerializableLayer, payload []byte, proto layers.IPProtocol) gopacket.Packet {
@@ -139,40 +143,6 @@ func TestNextPacket_SyntheticFrames(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestMockPacketSource(t *testing.T) {
-	packets := []*PacketData{
-		{Data: []byte("<13>msg1"), SrcIP: "192.168.1.1"},
-		{Data: []byte("<13>msg2"), SrcIP: "192.168.1.2"},
-	}
-
-	mock := NewMockPacketSource(packets)
-	defer mock.Close()
-
-	p1, err := mock.NextPacket()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p1 == nil || string(p1.Data) != "<13>msg1" || p1.SrcIP != "192.168.1.1" {
-		t.Errorf("unexpected packet 1: %+v", p1)
-	}
-
-	p2, err := mock.NextPacket()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p2 == nil || string(p2.Data) != "<13>msg2" || p2.SrcIP != "192.168.1.2" {
-		t.Errorf("unexpected packet 2: %+v", p2)
-	}
-
-	p3, err := mock.NextPacket()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p3 != nil {
-		t.Errorf("expected nil after exhausting packets, got %+v", p3)
 	}
 }
 
@@ -342,20 +312,66 @@ func TestPcapPacketSource_StatsAndClose(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatalf("unexpected close error: %v", err)
 	}
+}
 
-	// 2. MockPacketSource Stats
-	mock := &MockPacketSource{
-		MockStats: &Stats{
-			PacketsReceived:  50,
-			PacketsDropped:   2,
-			PacketsIfDropped: 0,
-		},
+func TestNewOfflinePacketSource(t *testing.T) {
+	// 1. Invalid file path returns error
+	_, err := NewOfflinePacketSource("non_existent_file.pcap", 514, "dst")
+	if err == nil {
+		t.Fatal("expected error opening non-existent pcap file, got nil")
 	}
-	mst, err := mock.Stats()
+
+	// 2. Valid pcap file created with pcapgo
+	tmpDir := t.TempDir()
+	pcapPath := filepath.Join(tmpDir, "test.pcap")
+
+	f, err := os.Create(pcapPath)
 	if err != nil {
-		t.Fatalf("unexpected mock stats error: %v", err)
+		t.Fatalf("failed to create temp pcap: %v", err)
 	}
-	if mst == nil || mst.PacketsReceived != 50 || mst.PacketsDropped != 2 {
-		t.Errorf("unexpected mock stats: %+v", mst)
+	w := pcapgo.NewWriter(f)
+	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
+		f.Close()
+		t.Fatalf("failed to write pcap header: %v", err)
+	}
+
+	// Write UDP syslog packet
+	udpPkt := buildFrame(t, &layers.UDP{SrcPort: 54321, DstPort: 514}, []byte("<13>Oct 11 22:14:15 host app: offline test"), layers.IPProtocolUDP)
+	ci := gopacket.CaptureInfo{
+		Timestamp:     time.Now(),
+		CaptureLength: len(udpPkt.Data()),
+		Length:        len(udpPkt.Data()),
+	}
+	if err := w.WritePacket(ci, udpPkt.Data()); err != nil {
+		f.Close()
+		t.Fatalf("failed to write packet to pcap: %v", err)
+	}
+	f.Close()
+
+	// Open offline source
+	offlineSource, err := NewOfflinePacketSource(pcapPath, 514, "dst")
+	if err != nil {
+		t.Fatalf("failed to open offline source: %v", err)
+	}
+	defer offlineSource.Close()
+
+	pd, err := offlineSource.NextPacket()
+	if err != nil {
+		t.Fatalf("unexpected error reading offline packet: %v", err)
+	}
+	if pd == nil {
+		t.Fatal("expected packet data, got nil")
+	}
+	if string(pd.Data) != "<13>Oct 11 22:14:15 host app: offline test" {
+		t.Errorf("unexpected offline packet payload: %q", string(pd.Data))
+	}
+	if pd.SrcIP != "192.168.1.100" {
+		t.Errorf("unexpected offline packet src ip: %q", pd.SrcIP)
+	}
+
+	// Next packet should return io.EOF (channel closed on file end)
+	pd2, err := offlineSource.NextPacket()
+	if err == nil && pd2 != nil {
+		t.Errorf("expected EOF or nil after single packet file, got %+v", pd2)
 	}
 }
