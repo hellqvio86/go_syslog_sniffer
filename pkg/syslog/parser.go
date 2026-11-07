@@ -5,7 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
-	"unicode/utf8"
+	"strings"
 )
 
 var (
@@ -63,11 +63,8 @@ func ParseSyslogPacket(data []byte) (*SyslogPacket, error) {
 		}
 	}
 
-	if !utf8.Valid(payloadBytes) {
-		return nil, ErrNotSyslog
-	}
-
-	msg := string(payloadBytes)
+	// Sanitize sample to valid UTF-8 so non-UTF8 syslog is never dropped
+	msg := strings.ToValidUTF8(string(payloadBytes), "\uFFFD")
 	var hostname string
 
 	if matches := rfc5424Regex.FindStringSubmatch(msg); len(matches) > 4 {

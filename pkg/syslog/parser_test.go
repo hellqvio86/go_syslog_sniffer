@@ -115,3 +115,22 @@ func TestParseWithTrailingNewline(t *testing.T) {
 		t.Errorf("expected original message preserved with newline, got %q", pkt.Message)
 	}
 }
+
+func TestParseNonUTF8_Sanitized(t *testing.T) {
+	// Probe test case: truncated mid-multibyte sequence (\xc3)
+	data := []byte("<13>Oct 11 22:14:15 h app: caf\xc3")
+	pkt, err := ParseSyslogPacket(data)
+	if err != nil {
+		t.Fatalf("unexpected error for non-UTF-8 syslog: %v", err)
+	}
+	if pkt == nil {
+		t.Fatal("expected packet to be counted/parsed, got nil")
+	}
+	if pkt.Hostname != "h" {
+		t.Errorf("expected hostname 'h', got %q", pkt.Hostname)
+	}
+	wantMessage := "<13>Oct 11 22:14:15 h app: caf\uFFFD"
+	if pkt.Message != wantMessage {
+		t.Errorf("expected sanitized message %q, got %q", wantMessage, pkt.Message)
+	}
+}

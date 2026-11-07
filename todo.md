@@ -39,7 +39,7 @@ This replaces my earlier review, which was written against the old single-file `
   3. Return a typed reason for rejection (`ErrNotSyslog`, `ErrEmpty`) so the app can count ignored packets (see S5).
 - **Acceptance:** table-driven tests for: valid 5424, valid 3164, octet-counted, `GET / HTTP/1.1`, `<999>`, text with `<` in the middle, empty payload, pure TCP ACK frame, SYN-ACK frame, empty UDP frame. Only the valid ones are counted.
 
-### [ ] B2. Valid syslog that is not valid UTF-8 is silently dropped **[probed]**
+### [x] B2. Valid syslog that is not valid UTF-8 is silently dropped **[probed]**
 - **Where:** `ParseSyslogPacket` (`if !utf8.Valid(...) { return nil }`).
 - **Problem:** `<13>Oct 11 22:14:15 h app: caf\xc3` (a message truncated mid-multibyte-character, which senders that truncate at a size limit produce routinely) is rejected and **not counted at all**. The same applies to Latin-1 hostnames or message bodies. A tool whose job is to discover who is sending syslog should not make senders disappear.
 - **Fix:** Count the packet, and sanitize only the sample: `strings.ToValidUTF8(msg, "\uFFFD")`, or add `"sample_encoding":"base64"` when the payload is not valid UTF-8. Never drop.
