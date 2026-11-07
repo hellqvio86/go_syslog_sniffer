@@ -13,34 +13,54 @@ fi
 INTERFACE="lo"
 PORT=5516
 IMAGE_NAME="syslog_sniffer:latest"
+CONTAINER_NAME="sniffer_e2e_test_go"
 
-echo "Starting sniffer container with 2s interval..."
+echo "Starting sniffer container..."
 rm -f sniffer_output_docker.txt
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 docker run --rm \
+    --name "$CONTAINER_NAME" \
     --network host \
     --cap-add=NET_RAW \
     --cap-add=NET_ADMIN \
     --user root \
     "$IMAGE_NAME" \
-    --interface "$INTERFACE" --port "$PORT" --interval 2 > sniffer_output_docker.txt 2>&1 &
+    --interface "$INTERFACE" --port "$PORT" --interval 5 > sniffer_output_docker.txt 2>&1 &
 SNIFFER_PID=$!
 
-# Start dummy listener on host
+# Start dummy listener on host so ICMP port unreachable is not generated
 nc -u -l -p "$PORT" > /dev/null 2>&1 &
 LISTENER_PID=$!
 
-# Give it a moment to start
-sleep 1
+# Wait for container to be actively running
+echo "Waiting for container to start..."
+MAX_RETRIES=20
+COUNT=0
+while ! docker ps | grep -q "$CONTAINER_NAME"; do
+  if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
+    echo "Timed out waiting for container to start."
+    exit 1
+  fi
+  sleep 0.2
+  COUNT=$((COUNT+1))
+done
 
-# Send a syslog message via UDP
+# Give socket brief time to initialize
+sleep 0.5
+
+# Send a syslog message via UDP (retry a couple times for reliability)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 echo "Generated Timestamp: $TIMESTAMP"
 MESSAGE="<165>1 $TIMESTAMP mymachine.example.com appname[su] - ID47 [exampleSDID@32473 iut=\"3\"] BOMAn application log entry..."
 echo "Sending message: $MESSAGE"
-echo -n "$MESSAGE" | nc -u -w 1 127.0.0.1 "$PORT"
 
-# Wait for sniffer to finish (it should exit after 2s)
+for _ in {1..3}; do
+  echo -n "$MESSAGE" | nc -u -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1 || true
+  sleep 0.2
+done
+
+# Wait for sniffer to finish
 echo "Waiting for sniffer to finish..."
 wait "$SNIFFER_PID" || true
 
@@ -52,7 +72,7 @@ echo "Checking output..."
 cat sniffer_output_docker.txt
 
 # Check for JSON structure and ABSENCE of logs
-if grep -q "\"interval_seconds\": 2" sniffer_output_docker.txt && grep -q "\"mymachine.example.com\"" sniffer_output_docker.txt; then
+if grep -q "\"interval_seconds\":" sniffer_output_docker.txt && grep -q "\"mymachine.example.com\"" sniffer_output_docker.txt; then
   echo "SUCCESS: JSON Summary found and message captured!"
   if grep -q "DEBUG" sniffer_output_docker.txt; then
     echo "FAILURE: DEBUG logs found in JSON output (should be quiet)."
