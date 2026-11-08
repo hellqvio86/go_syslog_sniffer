@@ -48,7 +48,7 @@ RUN chmod 755 /usr/local/bin/syslog_sniffer \
     && setcap cap_net_raw+ep /usr/local/bin/syslog_sniffer \
     && ln -s /usr/local/bin/syslog_sniffer /usr/local/bin/sniffer
 
-USER sniffer:sniffer
+USER 10001:10001
 
 ENTRYPOINT ["/usr/local/bin/syslog_sniffer"]
 CMD ["--help"]
