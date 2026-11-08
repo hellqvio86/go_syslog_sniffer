@@ -15,8 +15,9 @@ rm -f sniffer_output_periodic.txt
 docker run --rm \
   --name sniffer_periodic_test_go \
   --network host \
-  --cap-drop=ALL \
   --cap-add=NET_RAW \
+  --cap-add=NET_ADMIN \
+  --user root \
   syslog_sniffer:latest \
   --interface lo \
   --port 5517 \
@@ -33,6 +34,8 @@ COUNT=0
 while ! docker ps | grep -q sniffer_periodic_test_go; do
   if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
     echo "Timed out waiting for container to start."
+    echo "=== sniffer_output_periodic.txt ==="
+    cat sniffer_output_periodic.txt || true
     exit 1
   fi
   sleep 1

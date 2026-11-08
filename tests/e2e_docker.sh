@@ -22,8 +22,9 @@ docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run --rm \
     --name "$CONTAINER_NAME" \
     --network host \
-    --cap-drop=ALL \
     --cap-add=NET_RAW \
+    --cap-add=NET_ADMIN \
+    --user root \
     "$IMAGE_NAME" \
     --interface "$INTERFACE" --port "$PORT" --interval 5 > sniffer_output_docker.txt 2>&1 &
 SNIFFER_PID=$!
@@ -39,6 +40,8 @@ COUNT=0
 while ! docker ps | grep -q "$CONTAINER_NAME"; do
   if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
     echo "Timed out waiting for container to start."
+    echo "=== sniffer_output_docker.txt ==="
+    cat sniffer_output_docker.txt || true
     exit 1
   fi
   sleep 0.2
