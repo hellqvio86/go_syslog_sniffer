@@ -29,10 +29,10 @@ func RunSniffer(
 	stderr io.Writer,
 ) error {
 	if cfg.Debug {
-		fmt.Fprintf(stderr, "DEBUG: Port to sniff: %d\n", cfg.Port)
-		fmt.Fprintf(stderr, "DEBUG: Interface to sniff: %s\n", cfg.Interface)
-		fmt.Fprintf(stderr, "DEBUG: Interval: %d seconds\n", cfg.Interval)
-		fmt.Fprintf(stderr, "DEBUG: Starting capture loop\n")
+		debugLog(stderr, "DEBUG: Port to sniff: %d\n", cfg.Port)
+		debugLog(stderr, "DEBUG: Interface to sniff: %s\n", cfg.Interface)
+		debugLog(stderr, "DEBUG: Interval: %d seconds\n", cfg.Interval)
+		debugLog(stderr, "DEBUG: Starting capture loop\n")
 	}
 
 	statsTracker := stats.NewTrackerWithOptions(cfg.MaxHosts, cfg.SampleBytes, cfg.NoSample, cfg.RedactSample)
@@ -45,12 +45,7 @@ func RunSniffer(
 		captureErr        error
 	)
 
-	for {
-		// Check context cancellation (e.g. SIGINT/SIGTERM)
-		if ctx.Err() != nil {
-			break
-		}
-
+	for ctx.Err() == nil {
 		// Check duration timeout if finite interval requested
 		if cfg.Interval > 0 && time.Since(startTime) >= duration {
 			break
@@ -71,7 +66,7 @@ func RunSniffer(
 						PacketsIfDropped: cs.PacketsIfDropped,
 					})
 					if cfg.Debug {
-						fmt.Fprintf(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
+						debugLog(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
 							cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
 					}
 				}
@@ -95,7 +90,7 @@ func RunSniffer(
 				break
 			}
 			if cfg.Debug {
-				fmt.Fprintf(stderr, "DEBUG: Error reading packet: %v\n", err)
+				debugLog(stderr, "DEBUG: Error reading packet: %v\n", err)
 			}
 			time.Sleep(consecutiveErrorBackoff)
 			continue
@@ -114,7 +109,7 @@ func RunSniffer(
 		}
 
 		if cfg.Debug {
-			fmt.Fprintf(stderr, "DEBUG: Received packet: len=%d\n", len(packet.Data))
+			debugLog(stderr, "DEBUG: Received packet: len=%d\n", len(packet.Data))
 		}
 
 		// Detect TLS ClientHello / TLS record
@@ -122,7 +117,7 @@ func RunSniffer(
 			statsTracker.RecordTLS(packet.SrcIP)
 			statsTracker.RecordIgnoredNotSyslog()
 			if cfg.Debug {
-				fmt.Fprintf(stderr, "DEBUG: Suspected TLS traffic from %s (ignoring)\n", packet.SrcIP)
+				debugLog(stderr, "DEBUG: Suspected TLS traffic from %s (ignoring)\n", packet.SrcIP)
 			}
 			continue
 		}
@@ -133,7 +128,7 @@ func RunSniffer(
 			if err != nil || syslogMsg == nil {
 				statsTracker.RecordIgnoredNotSyslog()
 				if cfg.Debug && err != nil {
-					fmt.Fprintf(stderr, "DEBUG: Ignored packet: %v\n", err)
+					debugLog(stderr, "DEBUG: Ignored packet: %v\n", err)
 				}
 				continue
 			}
@@ -145,7 +140,7 @@ func RunSniffer(
 			statsTracker.AddEntry(packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
 
 			if cfg.Debug {
-				fmt.Fprintf(stderr, "DEBUG: Captured from %s (claimed=%s): %q\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+				debugLog(stderr, "DEBUG: Captured from %s (claimed=%s): %q\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
 			}
 		}
 	}
@@ -158,7 +153,7 @@ func RunSniffer(
 			PacketsIfDropped: cs.PacketsIfDropped,
 		})
 		if cfg.Debug {
-			fmt.Fprintf(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
+			debugLog(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
 				cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
 		}
 	}
@@ -188,11 +183,15 @@ func RunSniffer(
 	}
 
 	if captureErr != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", captureErr)
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", captureErr)
 		return captureErr
 	}
 
 	return nil
+}
+
+func debugLog(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
 }
 
 func writeSummary(w io.Writer, summary stats.JSONSummary, format string) error {

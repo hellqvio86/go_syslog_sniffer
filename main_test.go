@@ -18,15 +18,16 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(tmpDir)
 
 	testBinaryPath = filepath.Join(tmpDir, "syslog_sniffer")
 	cmd := exec.Command("go", "build", "-o", testBinaryPath, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(tmpDir)
 		panic("failed to build test binary: " + string(out))
 	}
 
 	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
 	os.Exit(code)
 }
 

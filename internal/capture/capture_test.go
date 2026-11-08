@@ -468,7 +468,7 @@ func TestNewOfflinePacketSource(t *testing.T) {
 	}
 	w := pcapgo.NewWriter(f)
 	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
-		f.Close()
+		_ = f.Close()
 		t.Fatalf("failed to write pcap header: %v", err)
 	}
 
@@ -480,17 +480,19 @@ func TestNewOfflinePacketSource(t *testing.T) {
 		Length:        len(udpPkt.Data()),
 	}
 	if err := w.WritePacket(ci, udpPkt.Data()); err != nil {
-		f.Close()
+		_ = f.Close()
 		t.Fatalf("failed to write packet to pcap: %v", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	// Open offline source
 	offlineSource, err := NewOfflinePacketSource(pcapPath, 514, "dst")
 	if err != nil {
 		t.Fatalf("failed to open offline source: %v", err)
 	}
-	defer offlineSource.Close()
+	defer func() {
+		_ = offlineSource.Close()
+	}()
 
 	pd, err := offlineSource.NextPacket()
 	if err != nil {
@@ -523,7 +525,7 @@ func BenchmarkOfflineReplay_100kPackets(b *testing.B) {
 	}
 	w := pcapgo.NewWriter(f)
 	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
-		f.Close()
+		_ = f.Close()
 		b.Fatalf("failed to write header: %v", err)
 	}
 
@@ -537,7 +539,7 @@ func BenchmarkOfflineReplay_100kPackets(b *testing.B) {
 	const packetCount = 100000
 	for i := 0; i < packetCount; i++ {
 		if err := w.WritePacket(ci, udpPkt.Data()); err != nil {
-			f.Close()
+			_ = f.Close()
 			b.Fatalf("failed to write packet %d: %v", i, err)
 		}
 	}

@@ -15,7 +15,9 @@ func TestMockPacketSource(t *testing.T) {
 	}
 
 	mock := NewMockPacketSource(packets)
-	defer mock.Close()
+	defer func() {
+		_ = mock.Close()
+	}()
 
 	p1, err := mock.NextPacket()
 	if err != nil {

@@ -66,7 +66,9 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	defer source.Close()
+	defer func() {
+		_ = source.Close()
+	}()
 
 	if err := app.RunSniffer(ctx, cfg, source, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

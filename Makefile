@@ -1,4 +1,4 @@
-.PHONY: help build run clean test fmt format lint coverage sbom docker-build docker-run docker-run-interactive docker-tag docker-push docker-clean all renovate renovate-summary hooks secrets trivy
+.PHONY: help build run clean test fmt fmt-check format lint coverage sbom docker-build docker-run docker-run-interactive docker-tag docker-push docker-clean all renovate renovate-summary hooks secrets trivy
 
 # Variables
 BINARY_NAME = syslog_sniffer
@@ -8,6 +8,11 @@ IMAGE_NAME = syslog_sniffer
 IMAGE_TAG = latest
 REGISTRY ?= # e.g. docker.io/username
 VERSION ?= $(shell tr -d '[:space:]' < VERSION 2>/dev/null || echo "0.1.0")
+GO_MOD_VERSION ?= $(shell grep '^go ' go.mod 2>/dev/null | awk '{print $$2}')
+ifneq ($(GO_MOD_VERSION),)
+GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
+export GOTOOLCHAIN
+endif
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -33,11 +38,16 @@ test: ## Run unit tests
 fmt: ## Format Go source files
 	gofmt -s -w .
 
+fmt-check: ## Check Go code formatting
+	@diff=$$(gofmt -l .); if [ -n "$$diff" ]; then echo "Unformatted files found: $$diff"; exit 1; fi
+
 format: fmt ## Alias for fmt
 
-lint: ## Run linter and static analysis
+lint: fmt-check ## Run linter and static analysis
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
+	elif [ -x "$$HOME/go/bin/golangci-lint" ]; then \
+		"$$HOME/go/bin/golangci-lint" run; \
 	else \
 		go vet ./...; \
 	fi

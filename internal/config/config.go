@@ -9,7 +9,7 @@ import (
 )
 
 // Version holds the application version, injectible via ldflags.
-var Version = "0.2.0"
+var Version = "0.2.1"
 
 // Config holds the runtime configuration parameters for syslog_sniffer.
 type Config struct {
@@ -69,43 +69,51 @@ func ParseArgs(arguments []string, errorOutput io.Writer) (*Config, error) {
 	fs.SetOutput(errorOutput)
 
 	fs.Usage = func() {
-		fmt.Fprintf(errorOutput, "syslog_sniffer %s\n\nUsage:\n  syslog_sniffer [OPTIONS]\n\nOptions:\n", Version)
-		fmt.Fprintln(errorOutput, "  -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo, default: \"any\")")
-		fmt.Fprintln(errorOutput, "  -p, --port <PORT>             Syslog port to monitor (1-65535, default: 514)")
-		fmt.Fprintln(errorOutput, "  -t, --interval <SECONDS>      Capture duration in seconds (0 = unlimited, default: 10)")
-		fmt.Fprintln(errorOutput, "  -d, --debug                   Enable debug output")
-		fmt.Fprintln(errorOutput, "  -v, --version                 Print version and exit")
-		fmt.Fprintln(errorOutput, "  -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface")
-		fmt.Fprintln(errorOutput, "      --periodic                Enable periodic summary output")
-		fmt.Fprintln(errorOutput, "      --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)")
-		fmt.Fprintln(errorOutput, "      --format <FORMAT>         Output format: json or ndjson (default: json)")
-		fmt.Fprintln(errorOutput, "      --max-hosts <COUNT>       Maximum distinct hosts to track in memory (default: 10000)")
-		fmt.Fprintln(errorOutput, "      --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)")
-		fmt.Fprintln(errorOutput, "      --no-sample               Do not include sample messages in output")
-		fmt.Fprintln(errorOutput, "      --redact-sample           Redact message samples in output")
-		fmt.Fprintln(errorOutput, "      --promisc                 Enable promiscuous mode on network interface (default: false)")
-		fmt.Fprintln(errorOutput, "      --list-interfaces         List available network interfaces and exit")
-		fmt.Fprintln(errorOutput, "  -h, --help                    Print usage instructions")
-		fmt.Fprintln(errorOutput, "\nEnvironment Variables:")
-		fmt.Fprintln(errorOutput, "  DEBUG=1                       Enable debug output (equivalent to -d / --debug)")
+		usage := fmt.Sprintf(`syslog_sniffer %s
+
+Usage:
+  syslog_sniffer [OPTIONS]
+
+Options:
+  -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo, default: "any")
+  -p, --port <PORT>             Syslog port to monitor (1-65535, default: 514)
+  -t, --interval <SECONDS>      Capture duration in seconds (0 = unlimited, default: 10)
+  -d, --debug                   Enable debug output
+  -v, --version                 Print version and exit
+  -r, --read-file <FILE>        Read packets from a pcap file instead of a live interface
+      --periodic                Enable periodic summary output
+      --frequency <SECONDS>     Frequency in seconds for periodic output (default: 5)
+      --format <FORMAT>         Output format: json or ndjson (default: json)
+      --max-hosts <COUNT>       Maximum distinct hosts to track in memory (default: 10000)
+      --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)
+      --no-sample               Do not include sample messages in output
+      --redact-sample           Redact message samples in output
+      --promisc                 Enable promiscuous mode on network interface (default: false)
+      --list-interfaces         List available network interfaces and exit
+  -h, --help                    Print usage instructions
+
+Environment Variables:
+  DEBUG=1                       Enable debug output (equivalent to -d / --debug)
+`, Version)
+		_, _ = io.WriteString(errorOutput, usage)
 	}
 
 	var (
-		intf           string = "any"
-		port           int    = 514
+		intf           = "any"
+		port           = 514
 		debug          bool
 		interval       uint64 = 10
 		periodic       bool
 		frequency      uint64 = 5
 		version        bool
-		maxHosts       int = 10000
-		sampleBytes    int = 2048
+		maxHosts       = 10000
+		sampleBytes    = 2048
 		listInterfaces bool
 		noSample       bool
 		redactSample   bool
 		promisc        bool
 		pcapFile       string
-		format         string = "json"
+		format         = "json"
 	)
 
 	stringVarAlias(fs, &intf, "interface", "i", "any", "Network interface to sniff")

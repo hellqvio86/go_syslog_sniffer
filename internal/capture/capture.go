@@ -57,7 +57,7 @@ func BuildBPFFilter(direction string, ports ...int) string {
 	if len(ports) == 0 {
 		ports = []int{514}
 	}
-	prefix := "dst port "
+	var prefix string
 	switch direction {
 	case "src":
 		prefix = "src port "
