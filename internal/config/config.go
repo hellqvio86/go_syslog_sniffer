@@ -9,7 +9,7 @@ import (
 )
 
 // Version holds the application version, injectible via ldflags.
-var Version = "0.2.1"
+var Version = "0.2.2"
 
 // Config holds the runtime configuration parameters for syslog_sniffer.
 type Config struct {
