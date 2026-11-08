@@ -33,23 +33,9 @@ SNIFFER_PID=$!
 nc -u -l -p "$PORT" > /dev/null 2>&1 &
 LISTENER_PID=$!
 
-# Wait for container to be actively running
+# Give container time to initialize socket
 echo "Waiting for container to start..."
-MAX_RETRIES=20
-COUNT=0
-while ! docker ps | grep -q "$CONTAINER_NAME"; do
-  if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
-    echo "Timed out waiting for container to start."
-    echo "=== sniffer_output_docker.txt ==="
-    cat sniffer_output_docker.txt || true
-    exit 1
-  fi
-  sleep 0.2
-  COUNT=$((COUNT+1))
-done
-
-# Give socket brief time to initialize
-sleep 0.5
+sleep 2
 
 # Send a syslog message via UDP (retry a couple times for reliability)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")

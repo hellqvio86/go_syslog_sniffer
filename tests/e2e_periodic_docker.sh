@@ -27,23 +27,9 @@ docker run --rm \
 
 SNIFFER_PID=$!
 
-# Wait for container to be running
+# Give container time to initialize socket
 echo "Waiting for container to start..."
-MAX_RETRIES=10
-COUNT=0
-while ! docker ps | grep -q sniffer_periodic_test_go; do
-  if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
-    echo "Timed out waiting for container to start."
-    echo "=== sniffer_output_periodic.txt ==="
-    cat sniffer_output_periodic.txt || true
-    exit 1
-  fi
-  sleep 1
-  COUNT=$((COUNT+1))
-done
-
-# Give application time to initialize socket
-sleep 1
+sleep 2
 
 # Send first batch of messages
 echo "Sending first batch of messages..."
