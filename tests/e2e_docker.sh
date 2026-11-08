@@ -35,17 +35,32 @@ LISTENER_PID=$!
 
 # Give container time to initialize socket
 echo "Waiting for container to start..."
+MAX_RETRIES=30
+COUNT=0
+while ! docker ps | grep -q "$CONTAINER_NAME"; do
+  if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
+    echo "Timed out waiting for container to start."
+    exit 1
+  fi
+  sleep 1
+  COUNT=$((COUNT+1))
+done
+
+# Give socket time to initialize pcap
 sleep 2
 
-# Send a syslog message via UDP (retry a couple times for reliability)
+# Send syslog messages via UDP periodically while sniffer is running
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 echo "Generated Timestamp: $TIMESTAMP"
 MESSAGE="<165>1 $TIMESTAMP mymachine.example.com appname[su] - ID47 [exampleSDID@32473 iut=\"3\"] BOMAn application log entry..."
 echo "Sending message: $MESSAGE"
 
-for _ in {1..3}; do
+for _ in {1..8}; do
+  if ! kill -0 "$SNIFFER_PID" 2>/dev/null; then
+    break
+  fi
   echo -n "$MESSAGE" | nc -u -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1 || true
-  sleep 0.2
+  sleep 0.5
 done
 
 # Wait for sniffer to finish
