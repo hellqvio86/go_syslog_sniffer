@@ -74,10 +74,71 @@ func TestParseSyslogPacket_Table(t *testing.T) {
 			wantMessage: "<191>local7 debug message",
 		},
 		{
-			name:        "valid RFC 5424 with long hostname truncated to 255 bytes",
+			name:        "valid RFC 3164 with year",
+			input:       []byte("<13>Oct 11 2026 22:14:15 myhost sshd: login"),
+			wantValid:   true,
+			wantHost:    "myhost",
+			wantMessage: "<13>Oct 11 2026 22:14:15 myhost sshd: login",
+		},
+		{
+			name:        "valid RFC 3164 with fractional seconds",
+			input:       []byte("<13>Oct 11 22:14:15.123 myhost sshd: login"),
+			wantValid:   true,
+			wantHost:    "myhost",
+			wantMessage: "<13>Oct 11 22:14:15.123 myhost sshd: login",
+		},
+		{
+			name:        "valid RFC 3164 with Cisco asterisk NTP marker and colon",
+			input:       []byte("<189>*Oct 11 22:14:15.123: router1 %SYS-5: configured"),
+			wantValid:   true,
+			wantHost:    "router1",
+			wantMessage: "<189>*Oct 11 22:14:15.123: router1 %SYS-5: configured",
+		},
+		{
+			name:        "valid RFC 3164 with Cisco dot NTP marker",
+			input:       []byte("<189>.Oct 11 22:14:15 router1 sshd: msg"),
+			wantValid:   true,
+			wantHost:    "router1",
+			wantMessage: "<189>.Oct 11 22:14:15 router1 sshd: msg",
+		},
+		{
+			name:        "valid Cisco sequence number prefix",
+			input:       []byte("<189>1234: *Oct 11 22:14:15.123: router1 %SYS-5: configured"),
+			wantValid:   true,
+			wantHost:    "router1",
+			wantMessage: "<189>1234: *Oct 11 22:14:15.123: router1 %SYS-5: configured",
+		},
+		{
+			name:        "valid Cisco sequence number only without timestamp",
+			input:       []byte("<189>1234: router1 sshd: msg"),
+			wantValid:   true,
+			wantHost:    "router1",
+			wantMessage: "<189>1234: router1 sshd: msg",
+		},
+		{
+			name:      "rejected PRI with leading zero <007>",
+			input:     []byte("<007>Oct 11 22:14:15 host msg"),
+			wantValid: false,
+			wantErr:   ErrNotSyslog,
+		},
+		{
+			name:      "rejected PRI with leading zero <01>",
+			input:     []byte("<01>Oct 11 22:14:15 host msg"),
+			wantValid: false,
+			wantErr:   ErrNotSyslog,
+		},
+		{
+			name:        "RFC 5424 version 2 has no claimed hostname from 5424",
+			input:       []byte("<165>2 2003-10-11T22:14:15.003Z myhost app 1 - - log"),
+			wantValid:   true,
+			wantHost:    "",
+			wantMessage: "<165>2 2003-10-11T22:14:15.003Z myhost app 1 - - log",
+		},
+		{
+			name:        "valid RFC 5424 with long hostname rejected (>255 bytes)",
 			input:       []byte("<165>1 2003-10-11T22:14:15.003Z " + strings.Repeat("a", 300) + " app 1 - - log"),
 			wantValid:   true,
-			wantHost:    strings.Repeat("a", 255),
+			wantHost:    "",
 			wantMessage: "<165>1 2003-10-11T22:14:15.003Z " + strings.Repeat("a", 300) + " app 1 - - log",
 		},
 		{
@@ -114,7 +175,7 @@ func TestParseSyslogPacket_Table(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pkt, err := ParseSyslogPacket(tc.input)
+			pkt, err := Parse(tc.input)
 			if tc.wantValid {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -145,7 +206,7 @@ func TestParseSyslogPacket_Table(t *testing.T) {
 
 func TestParseWithTrailingNewline(t *testing.T) {
 	data := []byte("<165>1 2026-11-07T12:00:00.000Z myhost.net app 1 - - Log message\n")
-	pkt, err := ParseSyslogPacket(data)
+	pkt, err := Parse(data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +224,7 @@ func TestParseWithTrailingNewline(t *testing.T) {
 func TestParseNonUTF8_Sanitized(t *testing.T) {
 	// Probe test case: truncated mid-multibyte sequence (\xc3)
 	data := []byte("<13>Oct 11 22:14:15 h app: caf\xc3")
-	pkt, err := ParseSyslogPacket(data)
+	pkt, err := Parse(data)
 	if err != nil {
 		t.Fatalf("unexpected error for non-UTF-8 syslog: %v", err)
 	}
@@ -184,7 +245,7 @@ func TestParseNonUTF8_Sanitized(t *testing.T) {
 
 func TestSplitMessages(t *testing.T) {
 	input := []byte("<13>msg1\n<13>msg2\r\n\n<13>msg3\n")
-	msgs := SplitMessages(input)
+	msgs := SplitMessages(input, "tcp")
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
@@ -196,6 +257,92 @@ func TestSplitMessages(t *testing.T) {
 	}
 	if string(msgs[2]) != "<13>msg3" {
 		t.Errorf("expected msg3, got %q", string(msgs[2]))
+	}
+
+	udpInput := []byte("<13>msg1\nstack line 1\nstack line 2\r\n")
+	udpMsgs := SplitMessages(udpInput, "udp")
+	if len(udpMsgs) != 1 {
+		t.Fatalf("expected 1 message for UDP datagram, got %d", len(udpMsgs))
+	}
+	if string(udpMsgs[0]) != "<13>msg1\nstack line 1\nstack line 2" {
+		t.Errorf("unexpected UDP message: %q", string(udpMsgs[0]))
+	}
+}
+
+func TestSplitMessages_F1_Table(t *testing.T) {
+	tests := []struct {
+		name         string
+		transport    string
+		payload      []byte
+		wantMessages int
+		wantValid    int
+		wantIgnored  int
+	}{
+		{
+			name:         "UDP multi-line datagram (1 message, 0 ignored)",
+			transport:    "udp",
+			payload:      []byte("<13>Oct 11 22:14:15 host1 stack trace line 1\nline 2\nline 3"),
+			wantMessages: 1,
+			wantValid:    1,
+			wantIgnored:  0,
+		},
+		{
+			name:         "TCP two octet-counted frames in one segment (2 messages)",
+			transport:    "tcp",
+			payload:      []byte("28 <13>Oct 11 22:14:15 host1 m128 <13>Oct 11 22:14:16 host1 m2"),
+			wantMessages: 2,
+			wantValid:    2,
+			wantIgnored:  0,
+		},
+		{
+			name:         "TCP octet length longer than payload (ignored)",
+			transport:    "tcp",
+			payload:      []byte("100 <13>Oct 11 22:14:15 host1 short"),
+			wantMessages: 1,
+			wantValid:    0,
+			wantIgnored:  1,
+		},
+		{
+			name:         "TCP LF-framed three messages (3)",
+			transport:    "tcp",
+			payload:      []byte("<13>Oct 11 22:14:15 host1 m1\n<13>Oct 11 22:14:16 host1 m2\n<13>Oct 11 22:14:17 host1 m3\n"),
+			wantMessages: 3,
+			wantValid:    3,
+			wantIgnored:  0,
+		},
+		{
+			name:         "UDP with trailing NUL byte",
+			transport:    "udp",
+			payload:      []byte("<13>Oct 11 22:14:15 host1 m1\x00"),
+			wantMessages: 1,
+			wantValid:    1,
+			wantIgnored:  0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msgs := SplitMessages(tc.payload, tc.transport)
+			if len(msgs) != tc.wantMessages {
+				t.Fatalf("expected %d messages from SplitMessages, got %d", tc.wantMessages, len(msgs))
+			}
+			valid := 0
+			ignored := 0
+			for _, m := range msgs {
+				_, err := Parse(m)
+				if err == nil {
+					valid++
+				} else {
+					ignored++
+				}
+			}
+			if valid != tc.wantValid {
+				t.Errorf("expected %d valid messages, got %d", tc.wantValid, valid)
+			}
+			if ignored != tc.wantIgnored {
+				t.Errorf("expected %d ignored messages, got %d", tc.wantIgnored, ignored)
+			}
+		})
 	}
 }
 
@@ -212,6 +359,11 @@ func FuzzParseSyslogPacket(f *testing.F) {
 		[]byte("<191>boundary pri"),
 		[]byte("<192>exceeded pri"),
 		[]byte("<165>1 2026-11-07T12:00:00Z - app 1 - - msg"),
+		[]byte("<13>Oct 11 2026 22:14:15 myhost sshd: login"),
+		[]byte("<189>*Oct 11 22:14:15.123: router1 %SYS-5: configured"),
+		[]byte("<189>1234: *Oct 11 22:14:15.123: router1 %SYS-5: configured"),
+		[]byte("<189>1234: router1 sshd: msg"),
+		[]byte("<007>invalid leading zero"),
 		[]byte(""),
 	}
 	for _, seed := range seeds {
@@ -219,7 +371,7 @@ func FuzzParseSyslogPacket(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		msg, err := ParseSyslogPacket(data)
+		msg, err := Parse(data)
 		if err != nil {
 			if msg != nil {
 				t.Fatalf("expected nil message on error, got %+v", msg)
@@ -264,7 +416,7 @@ func BenchmarkParseSyslogPacket_RFC5424(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = ParseSyslogPacket(data)
+		_, _ = Parse(data)
 	}
 }
 
@@ -273,6 +425,6 @@ func BenchmarkParseSyslogPacket_RFC3164(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = ParseSyslogPacket(data)
+		_, _ = Parse(data)
 	}
 }

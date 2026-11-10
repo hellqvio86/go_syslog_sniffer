@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"os"
 	"strings"
 	"testing"
 )
@@ -244,15 +245,103 @@ func TestS2_IntervalAndPeriodicSemantics(t *testing.T) {
 }
 
 func TestParseSampleFlags(t *testing.T) {
-	cfg, err := ParseArgs([]string{"--no-sample", "--redact-sample"}, &bytes.Buffer{})
+	// 1. --no-sample alone
+	cfg1, err := ParseArgs([]string{"--no-sample"}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !cfg.NoSample {
-		t.Errorf("expected NoSample true, got false")
+	if !cfg1.NoSample || cfg1.RedactSample {
+		t.Errorf("expected NoSample true and RedactSample false, got: %+v", cfg1)
 	}
-	if !cfg.RedactSample {
-		t.Errorf("expected RedactSample true, got false")
+
+	// 2. --redact-sample alone
+	cfg2, err := ParseArgs([]string{"--redact-sample"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg2.NoSample || !cfg2.RedactSample {
+		t.Errorf("expected NoSample false and RedactSample true, got: %+v", cfg2)
+	}
+
+	// 3. Both together returns an error
+	_, err = ParseArgs([]string{"--no-sample", "--redact-sample"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("expected error when specifying both --no-sample and --redact-sample, got nil")
+	}
+}
+
+func TestConfigValidation_S4(t *testing.T) {
+	// max-hosts <= 0
+	if _, err := ParseArgs([]string{"--max-hosts", "0"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for --max-hosts 0")
+	}
+	if _, err := ParseArgs([]string{"--max-hosts", "-5"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for --max-hosts -5")
+	}
+
+	// sample-bytes <= 0
+	if _, err := ParseArgs([]string{"--sample-bytes", "0"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for --sample-bytes 0")
+	}
+	if _, err := ParseArgs([]string{"--sample-bytes", "-10"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for --sample-bytes -10")
+	}
+
+	// -r combined with -i
+	if _, err := ParseArgs([]string{"-r", "test.pcap", "-i", "eth0"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for -r combined with -i")
+	}
+
+	// -r combined with --promisc
+	if _, err := ParseArgs([]string{"-r", "test.pcap", "--promisc"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for -r combined with --promisc")
+	}
+
+	// --periodic defaults to ndjson when format not specified
+	cfgPeriodic, err := ParseArgs([]string{"--periodic"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgPeriodic.Format != "ndjson" {
+		t.Errorf("expected Format 'ndjson' for --periodic, got %q", cfgPeriodic.Format)
+	}
+
+	// --periodic with explicit format json remains json
+	cfgPeriodicJSON, err := ParseArgs([]string{"--periodic", "--format", "json"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfgPeriodicJSON.Format != "json" {
+		t.Errorf("expected Format 'json', got %q", cfgPeriodicJSON.Format)
+	}
+}
+
+func TestConfigMultiPortAndDirection_F5(t *testing.T) {
+	cfg, err := ParseArgs([]string{"-p", "514,6514,1514", "--direction", "both"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Ports) != 3 || cfg.Ports[0] != 514 || cfg.Ports[1] != 6514 || cfg.Ports[2] != 1514 {
+		t.Errorf("unexpected Ports: %v", cfg.Ports)
+	}
+	if cfg.Port != 514 {
+		t.Errorf("unexpected Port: %d", cfg.Port)
+	}
+	if cfg.Direction != "both" {
+		t.Errorf("unexpected Direction: %s", cfg.Direction)
+	}
+
+	// Invalid direction
+	if _, err := ParseArgs([]string{"--direction", "invalid"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for invalid direction")
+	}
+
+	// Invalid port
+	if _, err := ParseArgs([]string{"-p", "0"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for port 0")
+	}
+	if _, err := ParseArgs([]string{"-p", "70000"}, &bytes.Buffer{}); err == nil {
+		t.Errorf("expected error for port 70000")
 	}
 }
 
@@ -337,5 +426,16 @@ func TestCLIErgonomics_R6(t *testing.T) {
 	}
 	if cfgShort.Port != 601 || cfgShort.Interface != "enp1s0" {
 		t.Errorf("unexpected short flag values: port=%d intf=%s", cfgShort.Port, cfgShort.Interface)
+	}
+}
+
+func TestVersionMatchesFile(t *testing.T) {
+	data, err := os.ReadFile("../../VERSION")
+	if err != nil {
+		t.Fatalf("failed to read VERSION file: %v", err)
+	}
+	expected := strings.TrimSpace(string(data))
+	if Version != expected {
+		t.Errorf("config.Version %q does not match VERSION file content %q", Version, expected)
 	}
 }

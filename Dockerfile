@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.27-bookworm AS builder
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS builder
 
 ARG VERSION=dev
 
@@ -28,7 +28,7 @@ FROM scratch AS artifacts
 COPY --from=builder /app/syslog_sniffer /syslog_sniffer
 
 # Runtime stage (Debian-based for glibc and libpcap compatibility)
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 # Install runtime dependencies and capability tools
 RUN apt-get update \

@@ -8,10 +8,12 @@ import (
 
 // MockPacketSource is an in-memory packet source for testing.
 type MockPacketSource struct {
-	packets            []*capture.PacketData
-	idx                int
-	ReturnEOFOnExhaust bool
-	MockStats          *capture.Stats
+	packets                      []*capture.PacketData
+	idx                          int
+	ReturnEOFOnExhaust           bool
+	ReturnCaptureClosedOnExhaust bool
+	MockStats                    *capture.Stats
+	StatsFunc                    func() (*capture.Stats, error)
 }
 
 // NewMockPacketSource creates a mock packet source with a predetermined packet sequence.
@@ -21,14 +23,20 @@ func NewMockPacketSource(packets []*capture.PacketData) *MockPacketSource {
 	}
 }
 
-// Stats returns the configured MockStats.
+// Stats returns the configured MockStats or invokes StatsFunc if provided.
 func (m *MockPacketSource) Stats() (*capture.Stats, error) {
+	if m.StatsFunc != nil {
+		return m.StatsFunc()
+	}
 	return m.MockStats, nil
 }
 
-// NextPacket returns the next mock packet or (nil, nil) (or io.EOF if ReturnEOFOnExhaust is set) when exhausted.
+// NextPacket returns the next mock packet or (nil, nil) (or io.EOF / ErrCaptureClosed if set) when exhausted.
 func (m *MockPacketSource) NextPacket() (*capture.PacketData, error) {
 	if m.idx >= len(m.packets) {
+		if m.ReturnCaptureClosedOnExhaust {
+			return nil, capture.ErrCaptureClosed
+		}
 		if m.ReturnEOFOnExhaust {
 			return nil, io.EOF
 		}

@@ -127,3 +127,47 @@ func TestCLI_InvalidPcapFile(t *testing.T) {
 		t.Errorf("expected pcap error in stderr, got: %q", stderr)
 	}
 }
+
+func TestCLI_ValidPcapFile(t *testing.T) {
+	pcapPath := filepath.Join("testdata", "valid_syslog.pcap")
+	exitCode, stdout, stderr, err := runBinary("-r", pcapPath)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for valid pcap replay, got %d (err: %v, stderr: %s)", exitCode, err, stderr)
+	}
+	if !strings.Contains(stdout, `"hosts"`) || !strings.Contains(stdout, "192.168.1.10") {
+		t.Errorf("expected valid JSON output with hosts, got: %s", stdout)
+	}
+}
+
+func TestCLI_VlanPcapFile(t *testing.T) {
+	pcapPath := filepath.Join("testdata", "vlan_syslog.pcap")
+	exitCode, stdout, stderr, err := runBinary("-r", pcapPath)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for vlan pcap, got %d (err: %v, stderr: %s)", exitCode, err, stderr)
+	}
+	if !strings.Contains(stdout, "192.168.1.50") {
+		t.Errorf("expected host 192.168.1.50 in output, got: %s", stdout)
+	}
+}
+
+func TestCLI_TcpPcapFile(t *testing.T) {
+	pcapPath := filepath.Join("testdata", "tcp_syslog.pcap")
+	exitCode, stdout, stderr, err := runBinary("-r", pcapPath)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for tcp pcap, got %d (err: %v, stderr: %s)", exitCode, err, stderr)
+	}
+	if !strings.Contains(stdout, "10.0.0.1") || !strings.Contains(stdout, "10.0.0.2") {
+		t.Errorf("expected hosts 10.0.0.1 and 10.0.0.2 in output, got: %s", stdout)
+	}
+}
+
+func TestCLI_IPv6PcapFile(t *testing.T) {
+	pcapPath := filepath.Join("testdata", "ipv6_syslog.pcap")
+	exitCode, stdout, stderr, err := runBinary("-r", pcapPath)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for ipv6 pcap, got %d (err: %v, stderr: %s)", exitCode, err, stderr)
+	}
+	if !strings.Contains(stdout, "2001:db8::1") {
+		t.Errorf("expected host 2001:db8::1 in output, got: %s", stdout)
+	}
+}

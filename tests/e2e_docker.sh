@@ -22,9 +22,8 @@ docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run --rm \
     --name "$CONTAINER_NAME" \
     --network host \
+    --cap-drop=ALL \
     --cap-add=NET_RAW \
-    --cap-add=NET_ADMIN \
-    --user root \
     "$IMAGE_NAME" \
     --interface "$INTERFACE" --port "$PORT" --interval 5 > sniffer_output_docker.txt 2>&1 &
 SNIFFER_PID=$!

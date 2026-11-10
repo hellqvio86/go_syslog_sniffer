@@ -5,6 +5,7 @@ sniffer
 # Coverage and test artifacts
 coverage.out
 coverage.html
+coverage.svg
 sniffer_output_*.txt
 
 # IDE / Editor

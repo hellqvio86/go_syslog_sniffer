@@ -17,31 +17,37 @@ var (
 )
 
 var (
-	// rfc5424Regex matches RFC 5424 syslog header:
-	// <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCT-DATA MSG
-	// Group 4 captures the HOSTNAME.
-	rfc5424Regex = regexp.MustCompile(`^<(\d{1,3})>(\d)\s+(\S+)\s+(\S+)\s+`)
+	// rfc5424Regex matches RFC 5424 syslog header with VERSION = 1:
+	// <PRI>1 TIMESTAMP HOSTNAME
+	// Group 2 captures the HOSTNAME.
+	rfc5424Regex = regexp.MustCompile(`^<([1-9]\d{0,2}|0)>1\s+\S+\s+(\S+)`)
 
-	// rfc3164Regex matches RFC 3164 BSD syslog header:
-	// <PRI>TIMESTAMP HOSTNAME MSG
-	// Group 3 captures the HOSTNAME.
-	rfc3164Regex = regexp.MustCompile(`^<(\d{1,3})>([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+`)
+	// rfc3164Regex matches BSD syslog header including Cisco prefixes and variations:
+	// <PRI>[seq:] [*|.]Mmm dd [yyyy] hh:mm:ss[.frac][:] HOSTNAME
+	// Group 4 captures the HOSTNAME.
+	rfc3164Regex = regexp.MustCompile(`^<([1-9]\d{0,2}|0)>(?:(\d+):\s*)?(?:[\*\.]\s*)?([A-Z][a-z]{2}\s+\d+(?:\s+\d{4})?\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)(?::)?\s+(\S+)`)
 
 	// rfc3164ISORegex matches rsyslog high-precision ISO-timestamp RFC 3164 header:
-	// <PRI>TIMESTAMP HOSTNAME MSG
+	// <PRI>[seq:] TIMESTAMP HOSTNAME
+	// Group 4 captures the HOSTNAME.
+	rfc3164ISORegex = regexp.MustCompile(`^<([1-9]\d{0,2}|0)>(?:(\d+):\s*)?(\d{4}-\d{2}-\d{2}T\S+)\s+(\S+)`)
+
+	// ciscoSeqOnlyRegex matches Cisco logs with sequence number prefix but no timestamp:
 	// Group 3 captures the HOSTNAME.
-	rfc3164ISORegex = regexp.MustCompile(`^<(\d{1,3})>(\d{4}-\d{2}-\d{2}T\S+)\s+(\S+)\s+`)
+	ciscoSeqOnlyRegex = regexp.MustCompile(`^<([1-9]\d{0,2}|0)>(\d+):\s+(\S+)`)
 
 	// headerPrefixRegex matches optional RFC 6587 octet count followed by <PRI>.
-	headerPrefixRegex = regexp.MustCompile(`^(?:(\d+)\s+)?<(\d{1,3})>`)
+	// PRI must not have leading zeros (e.g. <0>, <13>, <191>; rejects <007>).
+	headerPrefixRegex = regexp.MustCompile(`^(?:(\d+)\s+)?<([1-9]\d{0,2}|0)>`)
+
+	// octetPrefixRegex checks for RFC 6587 octet-counted framing (^<digits> <).
+	octetPrefixRegex = regexp.MustCompile(`^(\d+)\s+<`)
 )
 
 func cleanHostname(raw string) string {
-	if raw == "" || raw == "-" {
+	raw = strings.TrimSuffix(raw, ":")
+	if raw == "" || raw == "-" || len(raw) > 255 {
 		return ""
-	}
-	if len(raw) > 255 {
-		raw = raw[:255]
 	}
 	for i := 0; i < len(raw); i++ {
 		b := raw[i]
@@ -50,7 +56,7 @@ func cleanHostname(raw string) string {
 			return ""
 		}
 	}
-	return raw
+	return strings.Clone(raw)
 }
 
 // Message represents a parsed syslog message.
@@ -60,18 +66,65 @@ type Message struct {
 	WasSanitized bool
 }
 
-// SyslogPacket is an alias for Message for backwards compatibility.
-type SyslogPacket = Message
-
-// SplitMessages splits newline-delimited syslog messages into separate byte slices.
-func SplitMessages(data []byte) [][]byte {
-	if !bytes.Contains(data, []byte("\n")) {
-		return [][]byte{data}
+// SplitMessages splits syslog messages based on transport (UDP or TCP) and framing.
+func SplitMessages(data []byte, transport ...string) [][]byte {
+	if len(data) == 0 {
+		return nil
 	}
+
+	t := "udp"
+	if len(transport) > 0 && transport[0] != "" {
+		t = transport[0]
+	}
+
+	// UDP: RFC 5426 specifies that each UDP datagram carries exactly one syslog message.
+	// Multi-line payloads (e.g. stack traces) must NOT be split.
+	if t == "udp" {
+		trimmed := bytes.TrimRight(data, "\r\n\x00")
+		if len(trimmed) == 0 {
+			return nil
+		}
+		return [][]byte{trimmed}
+	}
+
+	// TCP transport: check for RFC 6587 octet-counted framing (^<digits> <)
+	if octetPrefixRegex.Match(data) {
+		var res [][]byte
+		rem := data
+		for len(rem) > 0 {
+			idxSpace := bytes.IndexByte(rem, ' ')
+			if idxSpace == -1 || idxSpace > 10 {
+				res = append(res, rem)
+				break
+			}
+			msgLen, err := strconv.Atoi(string(rem[:idxSpace]))
+			if err != nil || msgLen <= 0 {
+				res = append(res, rem)
+				break
+			}
+			msgStart := idxSpace + 1
+			if msgStart >= len(rem) {
+				res = append(res, rem)
+				break
+			}
+			if msgStart+msgLen > len(rem) {
+				// Octet count exceeds segment size: return non-syslog token to trigger not_syslog
+				res = append(res, rem[:idxSpace])
+				break
+			}
+			msg := rem[msgStart : msgStart+msgLen]
+			res = append(res, bytes.TrimRight(msg, "\r\n\x00"))
+			rem = rem[msgStart+msgLen:]
+			rem = bytes.TrimLeft(rem, " \r\n")
+		}
+		return res
+	}
+
+	// TCP non-octet-counted: traditional LF delimiter (RFC 6587 non-transparent framing)
 	var res [][]byte
 	lines := bytes.Split(data, []byte("\n"))
 	for _, l := range lines {
-		trimmed := bytes.TrimSpace(l)
+		trimmed := bytes.TrimRight(l, "\r\x00")
 		if len(trimmed) > 0 {
 			res = append(res, trimmed)
 		}
@@ -109,26 +162,23 @@ func Parse(data []byte) (*Message, error) {
 		}
 	}
 
+	var hostname string
+	if m := rfc5424Regex.FindSubmatch(payloadBytes); len(m) > 2 {
+		hostname = cleanHostname(string(m[2]))
+	} else if m := rfc3164Regex.FindSubmatch(payloadBytes); len(m) > 4 {
+		hostname = cleanHostname(string(m[4]))
+	} else if m := rfc3164ISORegex.FindSubmatch(payloadBytes); len(m) > 4 {
+		hostname = cleanHostname(string(m[4]))
+	} else if m := ciscoSeqOnlyRegex.FindSubmatch(payloadBytes); len(m) > 3 {
+		hostname = cleanHostname(string(m[3]))
+	}
+
 	wasSanitized := !utf8.Valid(payloadBytes)
 	msg := strings.ToValidUTF8(string(payloadBytes), "\uFFFD")
-	var hostname string
-
-	if matches := rfc5424Regex.FindStringSubmatch(msg); len(matches) > 4 {
-		hostname = cleanHostname(matches[4])
-	} else if matches := rfc3164Regex.FindStringSubmatch(msg); len(matches) > 3 {
-		hostname = cleanHostname(matches[3])
-	} else if matches := rfc3164ISORegex.FindStringSubmatch(msg); len(matches) > 3 {
-		hostname = cleanHostname(matches[3])
-	}
 
 	return &Message{
 		Message:      msg,
 		Hostname:     hostname,
 		WasSanitized: wasSanitized,
 	}, nil
-}
-
-// ParseSyslogPacket is an alias for Parse.
-func ParseSyslogPacket(data []byte) (*Message, error) {
-	return Parse(data)
 }

@@ -284,7 +284,7 @@ func TestNextPacket_ChannelClosed(t *testing.T) {
 }
 
 func TestNewPcapPacketSource_InvalidInterface(t *testing.T) {
-	_, err := NewPcapPacketSource("non_existent_device_xyz123", 514)
+	_, err := NewPcapPacketSourceMultiPort("non_existent_device_xyz123", []int{514}, "dst", false)
 	if err == nil {
 		t.Fatal("expected error opening non-existent interface, got nil")
 	}
@@ -307,43 +307,43 @@ func TestBuildBPFFilter(t *testing.T) {
 			name:      "default dst single port",
 			direction: "dst",
 			ports:     []int{514},
-			want:      "dst port 514",
+			want:      "(dst port 514) or (vlan and dst port 514)",
 		},
 		{
 			name:      "empty direction defaults to dst",
 			direction: "",
 			ports:     []int{514},
-			want:      "dst port 514",
+			want:      "(dst port 514) or (vlan and dst port 514)",
 		},
 		{
 			name:      "src single port",
 			direction: "src",
 			ports:     []int{514},
-			want:      "src port 514",
+			want:      "(src port 514) or (vlan and src port 514)",
 		},
 		{
 			name:      "both directions single port",
 			direction: "both",
 			ports:     []int{514},
-			want:      "port 514",
+			want:      "(port 514) or (vlan and port 514)",
 		},
 		{
 			name:      "dst multiple ports",
 			direction: "dst",
 			ports:     []int{514, 601},
-			want:      "(dst port 514 or dst port 601)",
+			want:      "((dst port 514 or dst port 601)) or (vlan and (dst port 514 or dst port 601))",
 		},
 		{
 			name:      "both multiple ports",
 			direction: "both",
 			ports:     []int{514, 601},
-			want:      "(port 514 or port 601)",
+			want:      "((port 514 or port 601)) or (vlan and (port 514 or port 601))",
 		},
 		{
 			name:      "empty ports defaults to 514",
 			direction: "dst",
 			ports:     nil,
-			want:      "dst port 514",
+			want:      "(dst port 514) or (vlan and dst port 514)",
 		},
 	}
 
@@ -352,6 +352,14 @@ func TestBuildBPFFilter(t *testing.T) {
 			got := BuildBPFFilter(tc.direction, tc.ports...)
 			if got != tc.want {
 				t.Errorf("BuildBPFFilter(%q, %v) = %q, want %q", tc.direction, tc.ports, got, tc.want)
+			}
+			// Verify with libpcap that the generated BPF filter expression compiles cleanly
+			insns, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, defaultSnapLen, got)
+			if err != nil {
+				t.Fatalf("failed to compile BPF filter %q: %v", got, err)
+			}
+			if len(insns) == 0 {
+				t.Errorf("compiled BPF filter returned empty instructions for %q", got)
 			}
 		})
 	}
@@ -512,6 +520,177 @@ func TestNewOfflinePacketSource(t *testing.T) {
 	pd2, err := offlineSource.NextPacket()
 	if err == nil && pd2 != nil {
 		t.Errorf("expected EOF or nil after single packet file, got %+v", pd2)
+	}
+}
+
+func TestNewOfflinePacketSource_VLAN(t *testing.T) {
+	tmpDir := t.TempDir()
+	pcapPath := filepath.Join(tmpDir, "vlan_test.pcap")
+
+	f, err := os.Create(pcapPath)
+	if err != nil {
+		t.Fatalf("failed to create temp pcap: %v", err)
+	}
+	w := pcapgo.NewWriter(f)
+	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write pcap header: %v", err)
+	}
+
+	vlanPkt := buildVLANFrame(t, &layers.UDP{SrcPort: 54321, DstPort: 514}, []byte("<13>Oct 11 22:14:15 host app: vlan syslog"), layers.IPProtocolUDP)
+	ci := gopacket.CaptureInfo{
+		Timestamp:     time.Now(),
+		CaptureLength: len(vlanPkt.Data()),
+		Length:        len(vlanPkt.Data()),
+	}
+	if err := w.WritePacket(ci, vlanPkt.Data()); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write packet to pcap: %v", err)
+	}
+	_ = f.Close()
+
+	offlineSource, err := NewOfflinePacketSource(pcapPath, 514, "dst")
+	if err != nil {
+		t.Fatalf("failed to open offline source: %v", err)
+	}
+	defer offlineSource.Close()
+
+	pd, err := offlineSource.NextPacket()
+	if err != nil {
+		t.Fatalf("unexpected error reading offline vlan packet: %v", err)
+	}
+	if pd == nil {
+		t.Fatal("expected packet data for vlan frame, got nil")
+	}
+	if string(pd.Data) != "<13>Oct 11 22:14:15 host app: vlan syslog" {
+		t.Errorf("unexpected payload: %q", string(pd.Data))
+	}
+	if pd.SrcIP.String() != "10.0.100.50" {
+		t.Errorf("unexpected src ip: %q", pd.SrcIP.String())
+	}
+}
+
+func TestNewOfflinePacketSource_MultiPortSecondPortOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	pcapPath := filepath.Join(tmpDir, "multiport_test.pcap")
+
+	f, err := os.Create(pcapPath)
+	if err != nil {
+		t.Fatalf("failed to create temp pcap: %v", err)
+	}
+	w := pcapgo.NewWriter(f)
+	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write pcap header: %v", err)
+	}
+
+	// Packet sent to port 6514 only (second port of [514, 6514])
+	pkt := buildFrame(t, &layers.UDP{SrcPort: 54321, DstPort: 6514}, []byte("<13>Oct 11 22:14:15 host app: port 6514"), layers.IPProtocolUDP)
+	ci := gopacket.CaptureInfo{
+		Timestamp:     time.Now(),
+		CaptureLength: len(pkt.Data()),
+		Length:        len(pkt.Data()),
+	}
+	if err := w.WritePacket(ci, pkt.Data()); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write packet: %v", err)
+	}
+	_ = f.Close()
+
+	src, err := NewOfflinePacketSourceMultiPort(pcapPath, []int{514, 6514}, "dst")
+	if err != nil {
+		t.Fatalf("failed to open offline multiport: %v", err)
+	}
+	defer src.Close()
+
+	pd, err := src.NextPacket()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pd == nil {
+		t.Fatal("expected packet on second port 6514, got nil")
+	}
+	if string(pd.Data) != "<13>Oct 11 22:14:15 host app: port 6514" {
+		t.Errorf("unexpected payload: %q", string(pd.Data))
+	}
+}
+
+func TestDecodeError_TruncatedFrame(t *testing.T) {
+	tmpDir := t.TempDir()
+	pcapPath := filepath.Join(tmpDir, "truncated.pcap")
+
+	f, err := os.Create(pcapPath)
+	if err != nil {
+		t.Fatalf("failed to create pcap: %v", err)
+	}
+	w := pcapgo.NewWriter(f)
+	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write header: %v", err)
+	}
+
+	// Valid Ethernet (14 bytes) + IPv4 (20 bytes) + partial UDP (4 bytes: src port 54321, dst port 514)
+	// BPF checks bytes up to dst port 514 and matches!
+	// But gopacket fails to decode full UDP header (requires 8 bytes), creating an ErrorLayer.
+	badFrame := []byte{
+		0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+		0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+		0x08, 0x00, // IPv4
+		0x45, 0x00, 0x00, 0x30, // Version 4, IHL 5, Total Length 48
+		0x00, 0x01, 0x00, 0x00, // ID, flags
+		0x40, 0x11, 0x00, 0x00, // TTL 64, Protocol UDP (17), checksum 0
+		0x0a, 0x00, 0x00, 0x01, // Src IP 10.0.0.1
+		0x0a, 0x00, 0x00, 0x02, // Dst IP 10.0.0.2
+		0xd4, 0x31, 0x02, 0x02, // SrcPort 54321, DstPort 514 (only 4 bytes of UDP instead of 8)
+	}
+	ci := gopacket.CaptureInfo{
+		Timestamp:     time.Now(),
+		CaptureLength: len(badFrame),
+		Length:        len(badFrame) + 10,
+	}
+	if err := w.WritePacket(ci, badFrame); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write bad packet: %v", err)
+	}
+	_ = f.Close()
+
+	src, err := NewOfflinePacketSource(pcapPath, 514, "both")
+	if err != nil {
+		t.Fatalf("failed to open pcap: %v", err)
+	}
+	defer src.Close()
+
+	pd, err := src.NextPacket()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !pd.DecodeError {
+		t.Errorf("expected DecodeError true, got false")
+	}
+}
+
+func TestUnsupportedLinkType(t *testing.T) {
+	tmpDir := t.TempDir()
+	pcapPath := filepath.Join(tmpDir, "unsupported_linktype.pcap")
+
+	f, err := os.Create(pcapPath)
+	if err != nil {
+		t.Fatalf("failed to create pcap: %v", err)
+	}
+	w := pcapgo.NewWriter(f)
+	// LinkTypeFDDI is 10, not in supported list
+	if err := w.WriteFileHeader(65535, layers.LinkType(10)); err != nil {
+		_ = f.Close()
+		t.Fatalf("failed to write header: %v", err)
+	}
+	_ = f.Close()
+
+	_, err = NewOfflinePacketSource(pcapPath, 514, "dst")
+	if err == nil {
+		t.Fatal("expected error for unsupported link type, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported link type") {
+		t.Errorf("expected error message to contain 'unsupported link type', got: %v", err)
 	}
 }
 

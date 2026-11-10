@@ -3,13 +3,15 @@ package stats
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 )
 
 func TestStatsTracker_Basic(t *testing.T) {
-	st := NewStatsTracker()
+	st := NewTracker()
 	if !st.IsEmpty() {
 		t.Fatal("expected new tracker to be empty")
 	}
@@ -48,7 +50,7 @@ func TestStatsTracker_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to marshal summary: %v", err)
 	}
-	var unmarshaled JsonSummary
+	var unmarshaled JSONSummary
 	if err := json.Unmarshal(b, &unmarshaled); err != nil {
 		t.Fatalf("failed to unmarshal summary: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestStatsTracker_Basic(t *testing.T) {
 }
 
 func TestStatsTracker_B4Acceptance(t *testing.T) {
-	st := NewStatsTracker()
+	st := NewTracker()
 
 	// 1. Two IPs claiming the same hostname produce two entries
 	st.AddEntryString("10.0.0.1", "shared-host", "<13>msg from 10.0.0.1")
@@ -86,7 +88,7 @@ func TestStatsTracker_B4Acceptance(t *testing.T) {
 func TestStatsTracker_S1Limits(t *testing.T) {
 	maxHosts := 5
 	sampleBytes := 64
-	st := NewStatsTrackerWithLimits(maxHosts, sampleBytes)
+	st := NewTrackerWithOptions(maxHosts, sampleBytes, false, false)
 
 	// Feed more than maxHosts distinct IPs
 	for i := 1; i <= 10; i++ {
@@ -103,7 +105,7 @@ func TestStatsTracker_S1Limits(t *testing.T) {
 	}
 
 	// Test sample truncation with large 64KB message
-	stBig := NewStatsTrackerWithLimits(10, sampleBytes)
+	stBig := NewTrackerWithOptions(10, sampleBytes, false, false)
 	largeMessage := strings.Repeat("A", 65536)
 	stBig.AddEntryString("10.1.1.1", "bighost", largeMessage)
 
@@ -118,7 +120,7 @@ func TestStatsTracker_S1Limits(t *testing.T) {
 }
 
 func TestStatsTracker_Clear(t *testing.T) {
-	st := NewStatsTracker()
+	st := NewTracker()
 	st.AddEntryString("10.0.0.1", "host1", "msg1")
 	st.Clear()
 	if !st.IsEmpty() {
@@ -134,7 +136,7 @@ func TestStatsTracker_Clear(t *testing.T) {
 }
 
 func TestStatsTracker_Concurrent(t *testing.T) {
-	st := NewStatsTracker()
+	st := NewTracker()
 	var wg sync.WaitGroup
 
 	for i := 0; i < 50; i++ {
@@ -161,7 +163,7 @@ func TestStatsTracker_Concurrent(t *testing.T) {
 
 func TestStatsTracker_S6SampleOptions(t *testing.T) {
 	// 1. Test NoSample
-	stNoSample := NewStatsTrackerWithOptions(100, 2048, true, false)
+	stNoSample := NewTrackerWithOptions(100, 2048, true, false)
 	stNoSample.AddEntryString("192.168.1.50", "host1", "<13>secret message")
 	sumNoSample := stNoSample.GetSummary(10)
 	hNoSample := sumNoSample.Hosts["192.168.1.50"]
@@ -181,7 +183,7 @@ func TestStatsTracker_S6SampleOptions(t *testing.T) {
 	}
 
 	// 2. Test RedactSample
-	stRedact := NewStatsTrackerWithOptions(100, 2048, false, true)
+	stRedact := NewTrackerWithOptions(100, 2048, false, true)
 	stRedact.AddEntryString("192.168.1.50", "host1", "<13>secret message")
 	sumRedact := stRedact.GetSummary(10)
 	hRedact := sumRedact.Hosts["192.168.1.50"]
@@ -202,7 +204,7 @@ func TestStatsTracker_S6SampleOptions(t *testing.T) {
 }
 
 func TestStatsTracker_S4CaptureStats(t *testing.T) {
-	st := NewStatsTracker()
+	st := NewTracker()
 	st.AddEntryString("10.0.0.1", "host1", "<13>test message")
 
 	// Initially no capture stats
@@ -244,7 +246,7 @@ func TestStatsTracker_S4CaptureStats(t *testing.T) {
 }
 
 func TestStatsTracker_SnapshotAndReset(t *testing.T) {
-	st := NewStatsTracker()
+	st := NewTracker()
 	st.AddEntryString("10.0.0.1", "host1", "msg1")
 	st.AddEntryString("10.0.0.2", "host2", "msg2")
 
@@ -314,5 +316,105 @@ func TestStatsTracker_SnapshotAndReset(t *testing.T) {
 
 	if totalSnapshotted != totalAdded {
 		t.Errorf("expected totalSnapshotted (%d) == totalAdded (%d)", totalSnapshotted, totalAdded)
+	}
+}
+
+func TestTracker_BoundedMemoryHeap(t *testing.T) {
+	const (
+		n           = 2000
+		sampleBytes = 256
+		messageSize = 65536 // 64 KB
+	)
+
+	// Force initial GC to stabilize baseline
+	runtime.GC()
+	var mBefore runtime.MemStats
+	runtime.ReadMemStats(&mBefore)
+
+	st := NewTrackerWithLimits(n, sampleBytes)
+
+	// Generate 64 KB message pattern
+	largePayload := make([]byte, messageSize)
+	for i := range largePayload {
+		largePayload[i] = 'A' + byte(i%26)
+	}
+	largeMsg := string(largePayload)
+
+	for i := 0; i < n; i++ {
+		ip := fmt.Sprintf("10.0.%d.%d", i/250, i%250)
+		hostname := fmt.Sprintf("host-%d", i)
+		st.AddEntryString(ip, hostname, largeMsg)
+	}
+
+	runtime.GC()
+	var mAfter runtime.MemStats
+	runtime.ReadMemStats(&mAfter)
+
+	var heapGrowth uint64
+	if mAfter.HeapAlloc > mBefore.HeapAlloc {
+		heapGrowth = mAfter.HeapAlloc - mBefore.HeapAlloc
+	}
+
+	// Maximum expected growth: N * (sampleBytes + 1500 bytes overhead)
+	// Without strings.Clone, heap retention would be > 120 MB (N * 64KB).
+	// With bounded samples, expected growth is < 4 MB.
+	maxExpected := uint64(n * (sampleBytes + 1500))
+	if heapGrowth > maxExpected {
+		t.Errorf("heap growth (%d bytes, %.2f MB) exceeds bound (%d bytes, %.2f MB) - possible message pinning",
+			heapGrowth, float64(heapGrowth)/(1024*1024), maxExpected, float64(maxExpected)/(1024*1024))
+	}
+}
+
+func TestTracker_S1Acceptance(t *testing.T) {
+	// 1. RecordTLS at max-hosts counts overflow
+	st := NewTrackerWithOptions(1, 2048, false, false)
+	ip1 := netip.MustParseAddr("10.0.0.1")
+	ip2 := netip.MustParseAddr("10.0.0.2")
+
+	st.RecordTLS(ip1)
+	if st.overflowEvents != 0 {
+		t.Errorf("expected 0 overflow events for first TLS host, got %d", st.overflowEvents)
+	}
+
+	st.RecordTLS(ip2)
+	if st.overflowEvents != 1 {
+		t.Errorf("expected 1 overflow event for second TLS host at cap, got %d", st.overflowEvents)
+	}
+
+	// 2. formatSample never ends mid-rune
+	// UTF-8: "hello €" where € is \xe2\x82\xac (3 bytes).
+	// Total length = 6 + 3 = 9 bytes.
+	// If sampleBytes = 7 or 8, truncating at byte offset would slice mid-rune.
+	stRune := NewTrackerWithOptions(10, 7, false, false)
+	stRune.AddEntry(ip1, "host", "hello € world")
+	sumRune := stRune.GetSummary(1)
+	sample := sumRune.Hosts[ip1.String()].Sample
+	if sample != "hello " {
+		t.Errorf("expected sample to truncate before broken rune to 'hello ', got %q", sample)
+	}
+}
+
+func TestTracker_S2Relays(t *testing.T) {
+	st := NewTrackerWithOptions(10, 2048, false, false)
+	relayIP := netip.MustParseAddr("10.10.10.1")
+
+	// 10 distinct hostnames forwarded through single relay IP
+	for i := 1; i <= 10; i++ {
+		st.AddEntry(relayIP, fmt.Sprintf("origin-host-%02d", i), fmt.Sprintf("msg %d", i))
+	}
+
+	sum := st.GetSummary(10)
+	h := sum.Hosts[relayIP.String()]
+	if h.Count != 10 {
+		t.Errorf("expected count 10, got %d", h.Count)
+	}
+	if h.Hostname != "origin-host-01" {
+		t.Errorf("expected primary hostname 'origin-host-01', got %q", h.Hostname)
+	}
+	if len(h.ClaimedHostnames) != 8 {
+		t.Errorf("expected ClaimedHostnames bounded to 8, got %d", len(h.ClaimedHostnames))
+	}
+	if h.ClaimedHostnamesTotal != 10 {
+		t.Errorf("expected ClaimedHostnamesTotal 10, got %d", h.ClaimedHostnamesTotal)
 	}
 }

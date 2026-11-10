@@ -31,9 +31,12 @@ type Stats struct {
 
 // PacketData contains the payload bytes and source IP extracted from a captured packet.
 type PacketData struct {
-	Data      []byte
-	SrcIP     netip.Addr
-	NoPayload bool
+	Data        []byte
+	SrcIP       netip.Addr
+	NoPayload   bool
+	Timestamp   time.Time
+	Transport   string // "udp" or "tcp"
+	DecodeError bool
 }
 
 // PacketSource defines the interface for consuming captured network packets.
@@ -49,9 +52,11 @@ type PcapPacketSource struct {
 	packets   <-chan gopacket.Packet
 	lastStats *Stats
 	timer     *time.Timer
+	isOffline bool
 }
 
-// BuildBPFFilter creates a BPF filter expression for the specified direction and ports.
+// BuildBPFFilter creates a BPF filter expression for the specified direction and ports,
+// matching both untagged and 802.1Q VLAN-tagged traffic.
 // Supported directions are "dst" (default), "src", and "both".
 func BuildBPFFilter(direction string, ports ...int) string {
 	if len(ports) == 0 {
@@ -67,15 +72,18 @@ func BuildBPFFilter(direction string, ports ...int) string {
 		prefix = "dst port "
 	}
 
+	var portExpr string
 	if len(ports) == 1 {
-		return fmt.Sprintf("%s%d", prefix, ports[0])
+		portExpr = fmt.Sprintf("%s%d", prefix, ports[0])
+	} else {
+		var parts []string
+		for _, p := range ports {
+			parts = append(parts, fmt.Sprintf("%s%d", prefix, p))
+		}
+		portExpr = fmt.Sprintf("(%s)", strings.Join(parts, " or "))
 	}
 
-	var parts []string
-	for _, p := range ports {
-		parts = append(parts, fmt.Sprintf("%s%d", prefix, p))
-	}
-	return fmt.Sprintf("(%s)", strings.Join(parts, " or "))
+	return fmt.Sprintf("(%s) or (vlan and %s)", portExpr, portExpr)
 }
 
 func formatInterfaceError(intf string, phase string, err error) error {
@@ -92,18 +100,28 @@ func formatInterfaceError(intf string, phase string, err error) error {
 	return fmt.Errorf("failed to %s interface %s: %w", phase, intf, err)
 }
 
-// NewPcapPacketSource opens a live pcap handle on the given interface and port with default "dst" direction and promisc false.
-func NewPcapPacketSource(intf string, port int) (*PcapPacketSource, error) {
-	return NewPcapPacketSourceWithOptions(intf, port, "dst", false)
-}
-
-// NewPcapPacketSourceWithDirection opens a live pcap handle with explicit direction ("dst", "src", or "both") and promisc false.
-func NewPcapPacketSourceWithDirection(intf string, port int, direction string) (*PcapPacketSource, error) {
-	return NewPcapPacketSourceWithOptions(intf, port, direction, false)
+func isSupportedLinkType(lt layers.LinkType) bool {
+	switch lt {
+	case layers.LinkTypeEthernet,
+		layers.LinkTypeLinuxSLL,
+		layers.LinkTypeNull,
+		layers.LinkTypeLoop,
+		layers.LinkTypeRaw,
+		layers.LinkTypeIPv4,
+		layers.LinkTypeIPv6:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewPcapPacketSourceWithOptions opens a live pcap handle with explicit direction and promiscuous mode setting.
 func NewPcapPacketSourceWithOptions(intf string, port int, direction string, promisc bool) (*PcapPacketSource, error) {
+	return NewPcapPacketSourceMultiPort(intf, []int{port}, direction, promisc)
+}
+
+// NewPcapPacketSourceMultiPort opens a live pcap handle with multiple ports, explicit direction, and promiscuous mode.
+func NewPcapPacketSourceMultiPort(intf string, ports []int, direction string, promisc bool) (*PcapPacketSource, error) {
 	inactive, err := pcap.NewInactiveHandle(intf)
 	if err != nil {
 		return nil, formatInterfaceError(intf, "open", err)
@@ -126,7 +144,13 @@ func NewPcapPacketSourceWithOptions(intf string, port int, direction string, pro
 		return nil, formatInterfaceError(intf, "open", err)
 	}
 
-	filter := BuildBPFFilter(direction, port)
+	lt := handle.LinkType()
+	if !isSupportedLinkType(lt) {
+		handle.Close()
+		return nil, fmt.Errorf("unsupported link type %s (linktype %d); consider specifying a network interface with -i", lt, lt)
+	}
+
+	filter := BuildBPFFilter(direction, ports...)
 	if err := handle.SetBPFFilter(filter); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("failed to set BPF filter %q: %w", filter, err)
@@ -138,8 +162,9 @@ func NewPcapPacketSourceWithOptions(intf string, port int, direction string, pro
 		NoCopy: true,
 	}
 	return &PcapPacketSource{
-		handle:  handle,
-		packets: pktSource.Packets(),
+		handle:    handle,
+		packets:   pktSource.Packets(),
+		isOffline: false,
 	}, nil
 }
 
@@ -161,10 +186,32 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 	select {
 	case pkt, ok := <-p.packets:
 		if !ok {
-			return nil, io.EOF
+			if p.isOffline {
+				return nil, io.EOF
+			}
+			return nil, ErrCaptureClosed
 		}
 		if pkt == nil {
 			return nil, nil
+		}
+
+		var ts time.Time
+		if md := pkt.Metadata(); md != nil {
+			ts = md.Timestamp
+		}
+
+		if pkt.ErrorLayer() != nil {
+			return &PacketData{
+				DecodeError: true,
+				Timestamp:   ts,
+			}, nil
+		}
+
+		var transport string
+		if pkt.Layer(layers.LayerTypeUDP) != nil {
+			transport = "udp"
+		} else if pkt.Layer(layers.LayerTypeTCP) != nil {
+			transport = "tcp"
 		}
 
 		var srcIP netip.Addr
@@ -196,12 +243,16 @@ func (p *PcapPacketSource) NextPacket() (*PacketData, error) {
 			return &PacketData{
 				SrcIP:     srcIP,
 				NoPayload: true,
+				Timestamp: ts,
+				Transport: transport,
 			}, nil
 		}
 
 		return &PacketData{
-			Data:  payload,
-			SrcIP: srcIP,
+			Data:      payload,
+			SrcIP:     srcIP,
+			Timestamp: ts,
+			Transport: transport,
 		}, nil
 	case <-p.timer.C:
 		return nil, nil
@@ -244,12 +295,23 @@ func (p *PcapPacketSource) Close() error {
 
 // NewOfflinePacketSource opens a saved pcap file and sets a BPF filter for the specified port and direction.
 func NewOfflinePacketSource(pcapFile string, port int, direction string) (*PcapPacketSource, error) {
+	return NewOfflinePacketSourceMultiPort(pcapFile, []int{port}, direction)
+}
+
+// NewOfflinePacketSourceMultiPort opens a saved pcap file and sets a BPF filter for multiple ports and direction.
+func NewOfflinePacketSourceMultiPort(pcapFile string, ports []int, direction string) (*PcapPacketSource, error) {
 	handle, err := pcap.OpenOffline(pcapFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open pcap file %s: %w", pcapFile, err)
 	}
 
-	filter := BuildBPFFilter(direction, port)
+	lt := handle.LinkType()
+	if !isSupportedLinkType(lt) {
+		handle.Close()
+		return nil, fmt.Errorf("unsupported link type %s (linktype %d); consider specifying a network interface with -i", lt, lt)
+	}
+
+	filter := BuildBPFFilter(direction, ports...)
 	if err := handle.SetBPFFilter(filter); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("failed to set BPF filter %q on %s: %w", filter, pcapFile, err)
@@ -261,7 +323,8 @@ func NewOfflinePacketSource(pcapFile string, port int, direction string) (*PcapP
 		NoCopy: true,
 	}
 	return &PcapPacketSource{
-		handle:  handle,
-		packets: pktSource.Packets(),
+		handle:    handle,
+		packets:   pktSource.Packets(),
+		isOffline: true,
 	}, nil
 }

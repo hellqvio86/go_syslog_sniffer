@@ -76,7 +76,8 @@ syslog_sniffer [OPTIONS]
 
 Options:
   -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo, or "any", default: "any")
-  -p, --port <PORT>             Syslog port to monitor (1-65535, default: 514)
+  -p, --port <PORTS>            Syslog port(s) to monitor (comma-separated, 1-65535, default: 514)
+      --direction <DIR>         Traffic direction to capture: dst, src, or both (default: dst)
   -t, --interval <SECONDS>      Duration in seconds to capture (0 = unlimited, default: 10)
   -d, --debug                   Enable debug diagnostic logging
   -v, --version                 Print version and exit
@@ -88,6 +89,7 @@ Options:
       --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)
       --no-sample               Do not include sample messages in output
       --redact-sample           Redact message samples in output
+      --emit-empty              Emit empty summary reports when no traffic was seen
       --promisc                 Enable promiscuous mode on network interface (default: false)
       --list-interfaces         List available network interfaces and exit
   -h, --help                    Print usage instructions
@@ -115,6 +117,10 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
       "count": 42,
       "src_ip": "192.168.1.10",
       "hostname": "mymachine.example.com",
+      "claimed_hostnames": [
+        "mymachine.example.com"
+      ],
+      "claimed_hostnames_total": 1,
       "sample": "<165>1 2026-11-07T12:00:00.000Z mymachine.example.com appname[123] - ID47 [exampleSDID@32473] Sample log entry",
       "sample_truncated": false,
       "tls_suspected": false
@@ -124,7 +130,8 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
   "ignored": {
     "no_payload": 5,
     "not_syslog": 2,
-    "non_utf8_sanitized": 1
+    "non_utf8_sanitized": 1,
+    "decode_errors": 0
   },
   "capture_stats": {
     "received": 120,
@@ -136,24 +143,28 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 
 ## Protocol Considerations & Limitations
 
-- **Multi-Message TCP Streams**: Newline-delimited syslog messages arriving within a single TCP segment are split and counted individually.
+- **Framing & Transports**: UDP datagrams are treated as exactly one syslog message without splitting on newlines (per RFC 5426). TCP streams support both RFC 6587 octet-counted framing (`<len> <msg>`) and traditional LF line delimiters.
+- **VLAN Tagging & BPF**: BPF filters automatically match both untagged and 802.1Q in-band VLAN tagged frames (`(dst port N) or (vlan and dst port N)`).
 - **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be payload-inspected without proxying. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
-- **Kernel & Interface Drops**: On packet capture termination or periodic reporting, kernel and interface statistics (`received`, `dropped`, `if_dropped`) are retrieved via `pcap_stats` and reported in `capture_stats`. Note that packet and host counts are lower bounds when drops > 0.
-- **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams) and non-syslog payloads are tracked in the top-level `ignored` section.
-- **UDP Fragmentation**: Large UDP syslog datagrams exceeding network MTU that undergo IP fragmentation only match port filters on the first fragment.
-- **Promiscuous Mode**: Promiscuous mode is disabled by default (`--promisc` to enable). In typical homelab setups sniffing local traffic, non-promiscuous mode reduces overhead and eliminates the need for `CAP_NET_ADMIN`.
+- **Relay Hostname Tracking**: Forwarders and relays (rsyslog, syslog-ng) that consolidate messages retain up to 8 unique claimed hostnames under `claimed_hostnames` and report `claimed_hostnames_total`.
+- **Kernel & Interface Drops**: On packet capture termination or periodic reporting, kernel and interface statistics (`received`, `dropped`, `if_dropped`) are retrieved via `pcap_stats` and reported in `capture_stats`. In periodic mode, deltas per window are reported.
+- **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams), non-syslog payloads, and link-layer decode errors are tracked in the top-level `ignored` section.
+- **UDP & IPv6 Fragmentation**: Large UDP datagrams that undergo IP fragmentation only match port filters on the first fragment. IPv6 extension headers are not reassembled.
+- **Promiscuous Mode**: Promiscuous mode is disabled by default (`--promisc` to enable). Enabling promiscuous mode generally requires `CAP_NET_ADMIN`.
+- **gopacket Fork Decision**: Evaluated `github.com/gopacket/gopacket`; the project retains `github.com/google/gopacket` v1.1.19 due to stability, pure Go layer decoders, standard CGO libpcap bindings, and broad distribution packaging.
 
 ## Security Considerations
 
-- **Sensitive Data & Sample Suppression**: Syslog messages frequently contain secrets, tokens, or PII. Use `--no-sample` to completely omit message samples from JSON reports, or `--redact-sample` to output `"[REDACTED]"` in place of raw packet contents.
+- **Sensitive Data & Sample Suppression**: Syslog messages frequently contain secrets, tokens, or PII. Use `--no-sample` to completely omit message samples from JSON reports, or `--redact-sample` to output `"[REDACTED]"` in place of raw packet contents. Debug logging (`--debug`) strictly respects sample suppression and redaction.
 - **Terminal Injection Prevention**: Debug messages logged to `stderr` are safely escaped using `%q` formatting to prevent ANSI escape sequence injection.
 - **Resource Exhaustion Bounds**: The memory footprint is strictly bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), preventing denial-of-service via spoofed source addresses or oversized payloads.
-- **Least Privilege**: The Docker container runs as non-root user `sniffer` (UID 10001) and requires only `CAP_NET_RAW`.
+- **Least Privilege & Capabilities**: The Docker container runs as non-root user `sniffer` (UID 10001) and requires only `CAP_NET_RAW` (`--cap-drop=ALL --cap-add=NET_RAW`). Note: file capabilities via `setcap` are disabled if `--security-opt no-new-privileges` is enforced.
 
 ## Performance & Benchmarks
 
-The capture pipeline uses lazy layer decoding and zero-copy packet slicing (`DecodeOptions{Lazy: true, NoCopy: true}`) along with an 8 MB kernel ring buffer and reused timer allocations. Benchmark results:
+The capture pipeline uses lazy layer decoding and bounded memory tracking. Benchmarks measured on Intel Core i7-1260P (Linux 6.x, Go 1.26+):
 
+- **End-to-End Pipeline (Split + Parse + AddEntry)**: ~1,167,000 packets/sec (1.11 µs/op, 81 MB/s throughput)
 - **Syslog Parser (RFC 5424)**: ~1,095,000 packets/sec (1.09 µs/op, 6 allocs/op)
 - **Syslog Parser (RFC 3164)**: ~1,390,000 packets/sec (0.82 µs/op, 6 allocs/op)
 - **Offline Pcap Replay (100k packets)**: ~1,430,000 packets/sec (179 MB/s throughput)

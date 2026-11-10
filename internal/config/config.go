@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +16,8 @@ var Version = "0.2.2"
 type Config struct {
 	Interface      string
 	Port           int
+	Ports          []int
+	Direction      string
 	Debug          bool
 	Interval       uint64
 	Periodic       bool
@@ -28,6 +31,7 @@ type Config struct {
 	PcapFile       string
 	Format         string
 	Promiscuous    bool
+	EmitEmpty      bool
 }
 
 // Parse parses CLI arguments from os.Args[1:] and returns the Config.
@@ -39,13 +43,6 @@ func stringVarAlias(fs *flag.FlagSet, p *string, long, short, val, usage string)
 	fs.StringVar(p, long, val, usage)
 	if short != "" {
 		fs.StringVar(p, short, val, usage)
-	}
-}
-
-func intVarAlias(fs *flag.FlagSet, p *int, long, short string, val int, usage string) {
-	fs.IntVar(p, long, val, usage)
-	if short != "" {
-		fs.IntVar(p, short, val, usage)
 	}
 }
 
@@ -76,7 +73,8 @@ Usage:
 
 Options:
   -i, --interface <INTERFACE>   Network interface to sniff (e.g., eth0, lo, default: "any")
-  -p, --port <PORT>             Syslog port to monitor (1-65535, default: 514)
+  -p, --port <PORT>             Syslog port(s) to monitor (comma-separated, 1-65535, default: 514)
+      --direction <DIR>         Traffic direction to capture: dst, src, or both (default: dst)
   -t, --interval <SECONDS>      Capture duration in seconds (0 = unlimited, default: 10)
   -d, --debug                   Enable debug output
   -v, --version                 Print version and exit
@@ -88,6 +86,7 @@ Options:
       --sample-bytes <BYTES>    Maximum byte length of message sample retained per host (default: 2048)
       --no-sample               Do not include sample messages in output
       --redact-sample           Redact message samples in output
+      --emit-empty              Emit empty summary reports when no traffic was seen
       --promisc                 Enable promiscuous mode on network interface (default: false)
       --list-interfaces         List available network interfaces and exit
   -h, --help                    Print usage instructions
@@ -100,7 +99,8 @@ Environment Variables:
 
 	var (
 		intf           = "any"
-		port           = 514
+		portStr        = "514"
+		direction      = "dst"
 		debug          bool
 		interval       uint64 = 10
 		periodic       bool
@@ -112,12 +112,14 @@ Environment Variables:
 		noSample       bool
 		redactSample   bool
 		promisc        bool
+		emitEmpty      bool
 		pcapFile       string
 		format         = "json"
 	)
 
 	stringVarAlias(fs, &intf, "interface", "i", "any", "Network interface to sniff")
-	intVarAlias(fs, &port, "port", "p", 514, "Syslog port to monitor")
+	stringVarAlias(fs, &portStr, "port", "p", "514", "Syslog port(s) to monitor")
+	fs.StringVar(&direction, "direction", "dst", "Traffic direction to capture: dst, src, or both")
 	boolVarAlias(fs, &debug, "debug", "d", false, "Enable debug output")
 	uint64VarAlias(fs, &interval, "interval", "t", 10, "Capture duration in seconds")
 	boolVarAlias(fs, &version, "version", "v", false, "Print version and exit")
@@ -130,6 +132,7 @@ Environment Variables:
 	fs.BoolVar(&noSample, "no-sample", false, "Do not include sample messages in output")
 	fs.BoolVar(&redactSample, "redact-sample", false, "Redact message samples in output")
 	fs.BoolVar(&promisc, "promisc", false, "Enable promiscuous mode on network interface")
+	fs.BoolVar(&emitEmpty, "emit-empty", false, "Emit empty summary reports when no traffic was seen")
 	fs.StringVar(&format, "format", "json", "Output format (json or ndjson)")
 
 	if err := fs.Parse(arguments); err != nil {
@@ -142,16 +145,49 @@ Environment Variables:
 		}, nil
 	}
 
-	// Check if interval was explicitly passed
-	var intervalSet bool
+	// Check flags explicitly passed
+	var intervalSet, intfSet, promiscSet, formatSet bool
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "t" || f.Name == "interval" {
 			intervalSet = true
 		}
+		if f.Name == "i" || f.Name == "interface" {
+			intfSet = true
+		}
+		if f.Name == "promisc" {
+			promiscSet = true
+		}
+		if f.Name == "format" {
+			formatSet = true
+		}
 	})
 
-	if port < 1 || port > 65535 {
-		return nil, fmt.Errorf("port must be between 1 and 65535, got %d", port)
+	if pcapFile != "" && (intfSet || promiscSet) {
+		return nil, fmt.Errorf("cannot specify -i/--interface or --promisc when reading from a pcap file (-r)")
+	}
+
+	var ports []int
+	for _, pStr := range strings.Split(portStr, ",") {
+		pStr = strings.TrimSpace(pStr)
+		if pStr == "" {
+			continue
+		}
+		p, err := strconv.Atoi(pStr)
+		if err != nil || p < 1 || p > 65535 {
+			return nil, fmt.Errorf("port must be between 1 and 65535, got %s", pStr)
+		}
+		ports = append(ports, p)
+	}
+	if len(ports) == 0 {
+		return nil, fmt.Errorf("at least one port must be specified")
+	}
+
+	direction = strings.ToLower(strings.TrimSpace(direction))
+	if direction == "" {
+		direction = "dst"
+	}
+	if direction != "dst" && direction != "src" && direction != "both" {
+		return nil, fmt.Errorf("invalid direction %q: must be 'dst', 'src', or 'both'", direction)
 	}
 
 	const maxAllowedDuration = 1 << 31
@@ -161,7 +197,9 @@ Environment Variables:
 			return nil, fmt.Errorf("interval %d exceeds maximum supported limit (%d seconds)", interval, maxAllowedDuration)
 		}
 	} else {
-		if periodic {
+		if pcapFile != "" {
+			interval = 0 // pcap replay defaults to unlimited (no wall-clock cut off)
+		} else if periodic {
 			interval = 0 // periodic defaults to unlimited
 		} else {
 			interval = 10 // standard mode defaults to 10s
@@ -180,15 +218,24 @@ Environment Variables:
 	}
 
 	if maxHosts <= 0 {
-		maxHosts = 10000
+		return nil, fmt.Errorf("max-hosts must be greater than 0, got %d", maxHosts)
 	}
 	if sampleBytes <= 0 {
-		sampleBytes = 2048
+		return nil, fmt.Errorf("sample-bytes must be greater than 0, got %d (use --no-sample to disable samples)", sampleBytes)
+	}
+	if noSample && redactSample {
+		return nil, fmt.Errorf("cannot specify both --no-sample and --redact-sample")
 	}
 
 	selectedFormat := strings.ToLower(strings.TrimSpace(format))
 	if selectedFormat == "" {
-		selectedFormat = "json"
+		if periodic && !formatSet {
+			selectedFormat = "ndjson"
+		} else {
+			selectedFormat = "json"
+		}
+	} else if !formatSet && periodic {
+		selectedFormat = "ndjson"
 	}
 	if selectedFormat != "json" && selectedFormat != "ndjson" {
 		return nil, fmt.Errorf("invalid output format %q: must be 'json' or 'ndjson'", format)
@@ -196,7 +243,9 @@ Environment Variables:
 
 	return &Config{
 		Interface:      intf,
-		Port:           port,
+		Port:           ports[0],
+		Ports:          ports,
+		Direction:      direction,
 		Debug:          debug,
 		Interval:       interval,
 		Periodic:       periodic,
@@ -210,5 +259,6 @@ Environment Variables:
 		PcapFile:       pcapFile,
 		Format:         selectedFormat,
 		Promiscuous:    promisc,
+		EmitEmpty:      emitEmpty,
 	}, nil
 }

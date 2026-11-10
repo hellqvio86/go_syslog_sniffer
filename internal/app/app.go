@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
@@ -43,6 +44,9 @@ func RunSniffer(
 	var (
 		consecutiveErrors int
 		captureErr        error
+		firstPacketTime   time.Time
+		lastPacketTime    time.Time
+		lastCaptureStats  *capture.Stats
 	)
 
 	for ctx.Err() == nil {
@@ -54,23 +58,21 @@ func RunSniffer(
 		// Handle periodic output
 		now := time.Now()
 		if cfg.Periodic && now.Sub(lastReportTime) >= time.Duration(cfg.Frequency)*time.Second {
-			if !statsTracker.IsEmpty() {
-				elapsed := uint64(now.Sub(lastReportTime).Seconds())
-				if elapsed == 0 {
-					elapsed = 1
+			elapsed := uint64(math.Ceil(now.Sub(lastReportTime).Seconds()))
+			if elapsed == 0 {
+				elapsed = 1
+			}
+			if cs, err := source.Stats(); err == nil && cs != nil {
+				deltaStats, nextStats := computeCaptureStatsDelta(cs, lastCaptureStats)
+				statsTracker.SetCaptureStats(deltaStats)
+				lastCaptureStats = nextStats
+				if cfg.Debug {
+					debugLog(stderr, "DEBUG: Capture stats delta: received=%d dropped=%d if_dropped=%d\n",
+						deltaStats.PacketsReceived, deltaStats.PacketsDropped, deltaStats.PacketsIfDropped)
 				}
-				if cs, err := source.Stats(); err == nil && cs != nil {
-					statsTracker.SetCaptureStats(&stats.CaptureStats{
-						PacketsReceived:  cs.PacketsReceived,
-						PacketsDropped:   cs.PacketsDropped,
-						PacketsIfDropped: cs.PacketsIfDropped,
-					})
-					if cfg.Debug {
-						debugLog(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
-							cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
-					}
-				}
-				summary := statsTracker.SnapshotAndReset(elapsed, lastReportTime, now)
+			}
+			summary := statsTracker.SnapshotAndReset(elapsed, lastReportTime, now)
+			if summary.HasData() || cfg.EmitEmpty {
 				if err := writeSummary(stdout, summary, cfg.Format); err != nil {
 					return err
 				}
@@ -80,7 +82,11 @@ func RunSniffer(
 
 		packet, err := source.NextPacket()
 		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, capture.ErrCaptureClosed) {
+			if errors.Is(err, io.EOF) {
+				// Clean EOF from offline capture stream
+				break
+			}
+			if errors.Is(err, capture.ErrCaptureClosed) {
 				captureErr = fmt.Errorf("capture stream closed: %w", err)
 				break
 			}
@@ -103,6 +109,18 @@ func RunSniffer(
 			continue
 		}
 
+		if !packet.Timestamp.IsZero() {
+			if firstPacketTime.IsZero() {
+				firstPacketTime = packet.Timestamp
+			}
+			lastPacketTime = packet.Timestamp
+		}
+
+		if packet.DecodeError {
+			statsTracker.RecordIgnoredDecodeError()
+			continue
+		}
+
 		if packet.NoPayload {
 			statsTracker.RecordIgnoredNoPayload()
 			continue
@@ -122,7 +140,7 @@ func RunSniffer(
 			continue
 		}
 
-		messages := syslog.SplitMessages(packet.Data)
+		messages := syslog.SplitMessages(packet.Data, packet.Transport)
 		for _, msgBytes := range messages {
 			syslogMsg, err := syslog.Parse(msgBytes)
 			if err != nil || syslogMsg == nil {
@@ -140,39 +158,71 @@ func RunSniffer(
 			statsTracker.AddEntry(packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
 
 			if cfg.Debug {
-				debugLog(stderr, "DEBUG: Captured from %s (claimed=%s): %q\n", packet.SrcIP, syslogMsg.Hostname, syslogMsg.Message)
+				if cfg.NoSample {
+					debugLog(stderr, "DEBUG: Captured from %s (claimed=%s): len=%d [sample suppressed]\n", packet.SrcIP, syslogMsg.Hostname, len(syslogMsg.Message))
+				} else if cfg.RedactSample {
+					debugLog(stderr, "DEBUG: Captured from %s (claimed=%s): [REDACTED]\n", packet.SrcIP, syslogMsg.Hostname)
+				} else {
+					sample := syslogMsg.Message
+					if len(sample) > cfg.SampleBytes {
+						for maxBytes := cfg.SampleBytes; maxBytes > 0; maxBytes-- {
+							if (sample[maxBytes] & 0xC0) != 0x80 {
+								sample = sample[:maxBytes]
+								break
+							}
+						}
+					}
+					debugLog(stderr, "DEBUG: Captured from %s (claimed=%s): %q\n", packet.SrcIP, syslogMsg.Hostname, sample)
+				}
 			}
 		}
 	}
 
 	// Output final report
 	if cs, err := source.Stats(); err == nil && cs != nil {
-		statsTracker.SetCaptureStats(&stats.CaptureStats{
-			PacketsReceived:  cs.PacketsReceived,
-			PacketsDropped:   cs.PacketsDropped,
-			PacketsIfDropped: cs.PacketsIfDropped,
-		})
+		prev := lastCaptureStats
+		if !cfg.Periodic {
+			prev = nil
+		}
+		deltaStats, _ := computeCaptureStatsDelta(cs, prev)
+		statsTracker.SetCaptureStats(deltaStats)
 		if cfg.Debug {
 			debugLog(stderr, "DEBUG: Capture stats: received=%d dropped=%d if_dropped=%d\n",
-				cs.PacketsReceived, cs.PacketsDropped, cs.PacketsIfDropped)
+				deltaStats.PacketsReceived, deltaStats.PacketsDropped, deltaStats.PacketsIfDropped)
 		}
 	}
 
-	if !cfg.Periodic || !statsTracker.IsEmpty() {
-		now := time.Now()
+	now := time.Now()
+	if cfg.Periodic {
+		elapsed := uint64(math.Ceil(now.Sub(lastReportTime).Seconds()))
+		if elapsed == 0 {
+			elapsed = 1
+		}
+		summary := statsTracker.SnapshotAndReset(elapsed, lastReportTime, now)
+		if summary.HasData() || cfg.EmitEmpty {
+			if err := writeSummary(stdout, summary, cfg.Format); err != nil {
+				return err
+			}
+		}
+	} else {
 		var (
 			interval uint64
 			start    time.Time
 		)
-		if cfg.Periodic {
-			elapsed := uint64(now.Sub(lastReportTime).Seconds())
+		if cfg.PcapFile != "" && !firstPacketTime.IsZero() && !lastPacketTime.IsZero() {
+			start = firstPacketTime
+			now = lastPacketTime
+			elapsed := uint64(math.Ceil(now.Sub(start).Seconds()))
 			if elapsed == 0 {
 				elapsed = 1
 			}
 			interval = elapsed
-			start = lastReportTime
 		} else {
-			interval = cfg.Interval
+			elapsed := uint64(math.Ceil(now.Sub(startTime).Seconds()))
+			if elapsed == 0 {
+				elapsed = 1
+			}
+			interval = elapsed
 			start = startTime
 		}
 
@@ -202,4 +252,38 @@ func writeSummary(w io.Writer, summary stats.JSONSummary, format string) error {
 	}
 	enc.SetIndent("", "  ")
 	return enc.Encode(summary)
+}
+
+func computeCaptureStatsDelta(curr *capture.Stats, prev *capture.Stats) (*stats.CaptureStats, *capture.Stats) {
+	if curr == nil {
+		return nil, prev
+	}
+	received := curr.PacketsReceived
+	dropped := curr.PacketsDropped
+	ifDropped := curr.PacketsIfDropped
+
+	if prev != nil {
+		received -= prev.PacketsReceived
+		if received < 0 {
+			received = 0
+		}
+		dropped -= prev.PacketsDropped
+		if dropped < 0 {
+			dropped = 0
+		}
+		ifDropped -= prev.PacketsIfDropped
+		if ifDropped < 0 {
+			ifDropped = 0
+		}
+	}
+
+	return &stats.CaptureStats{
+		PacketsReceived:  received,
+		PacketsDropped:   dropped,
+		PacketsIfDropped: ifDropped,
+	}, &capture.Stats{
+		PacketsReceived:  curr.PacketsReceived,
+		PacketsDropped:   curr.PacketsDropped,
+		PacketsIfDropped: curr.PacketsIfDropped,
+	}
 }

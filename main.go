@@ -49,18 +49,22 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	go func() {
+		<-ctx.Done()
+		cancel()
+	}()
 
 	var (
 		source capture.PacketSource
 	)
 	if cfg.PcapFile != "" {
-		source, err = capture.NewOfflinePacketSource(cfg.PcapFile, cfg.Port, "dst")
+		source, err = capture.NewOfflinePacketSourceMultiPort(cfg.PcapFile, cfg.Ports, cfg.Direction)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to open pcap file: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
-		source, err = capture.NewPcapPacketSourceWithOptions(cfg.Interface, cfg.Port, "dst", cfg.Promiscuous)
+		source, err = capture.NewPcapPacketSourceMultiPort(cfg.Interface, cfg.Ports, cfg.Direction, cfg.Promiscuous)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to setup capture: %v\n", err)
 			os.Exit(1)

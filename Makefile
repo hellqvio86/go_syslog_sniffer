@@ -64,7 +64,7 @@ sbom: ## Generate SBOM in CycloneDX format
 	elif command -v trivy >/dev/null 2>&1; then \
 		trivy fs --format cyclonedx -o sbom.json .; \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v $$(pwd):/src -w /src aquasec/trivy:latest fs --format cyclonedx -o sbom.json .; \
+		docker run --rm -v $$(pwd):/src -w /src aquasec/trivy:0.60.0 fs --format cyclonedx -o sbom.json .; \
 	else \
 		echo "ERROR: trivy, syft, or docker is required!" >&2 && exit 1; \
 	fi
@@ -127,7 +127,7 @@ secrets: ## Run TruffleHog secret scanning
 	@if command -v trufflehog >/dev/null 2>&1; then \
 		trufflehog --no-update git file://$$(pwd) --only-verified --fail; \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v $$(pwd):/src -w /src trufflesecurity/trufflehog:latest git file:///src --only-verified --fail; \
+		docker run --rm -v $$(pwd):/src -w /src trufflesecurity/trufflehog:3.88.15 git file:///src --only-verified --fail; \
 	else \
 		echo "ERROR: trufflehog or docker is required!" >&2 && exit 1; \
 	fi
@@ -137,7 +137,7 @@ trivy: ## Run Trivy vulnerability scanning
 	@if command -v trivy >/dev/null 2>&1; then \
 		trivy fs --severity HIGH,CRITICAL --exit-code 1 .; \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v $$(pwd):/src -v trivy-cache:/root/.cache -w /src aquasec/trivy:latest fs --severity HIGH,CRITICAL --exit-code 1 .; \
+		docker run --rm -v $$(pwd):/src -v trivy-cache:/root/.cache -w /src aquasec/trivy:0.60.0 fs --severity HIGH,CRITICAL --exit-code 1 .; \
 	else \
 		echo "ERROR: trivy or docker is required!" >&2 && exit 1; \
 	fi

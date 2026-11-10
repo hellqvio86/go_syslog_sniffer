@@ -1,289 +1,249 @@
-# TODO: go_syslog_sniffer — critical review (v2, against current code)
+# TODO: go_syslog_sniffer — critical review (v3, against current code)
 
-Repo: hellqvio86/go_syslog_sniffer, reviewed from the uploaded zip at commit `38f7b1a` (module `go 1.25.0`, packages `pkg/{app,capture,config,stats,syslog}`, Dockerfile, CI, Renovate + Dependabot).
-This replaces my earlier review, which was written against the old single-file `sniffer.go` (commit `884d292`). Most of that review no longer applies; see "Status of the previous review" at the bottom.
+Repo: hellqvio86/go_syslog_sniffer, `VERSION` 0.2.2, zip commit `445443de20dc1d190fc5100cba2cdad20c8d6306`, module `go 1.26.0`, layout `main.go` + `internal/{app,capture,config,stats,syslog,testutil}`.
 
-## How this was verified
+This **replaces** the `todo.md` currently in the repo (v2). Every v2 item is ticked and, with the exceptions listed in "Status of v2" at the bottom, really is fixed. The IDs below are new; do not map them to v2 IDs.
 
-- `go vet ./...` clean; `go test -race ./...` passes. (Run in a scratch copy with the `go` directive lowered to 1.22 because the sandbox only had Go 1.22.)
-- Coverage: app 72.4%, capture 60.0%, config 92.3%, stats 100%, syslog 100%, main 0%.
-- Behavioural claims below marked **[probed]** were confirmed with synthetic Ethernet/IP/TCP/UDP frames built with `gopacket.SerializeLayers` and fed through `PcapPacketSource.NextPacket` + `syslog.ParseSyslogPacket` (probe code in the appendix).
-- NOT verified: live pcap capture, the Docker build, whether CI is currently green, GitHub-side settings (branch protection, GHCR visibility), and whether the pinned action versions exist.
+## How this was verified (read first)
+
+- **Static review only.** The sandbox had no Go toolchain and no module access, so nothing was compiled, run or probed. Coverage numbers, benchmark numbers and CI status are NOT re-checked.
+- **[static]** = follows directly from the code as written; the first step of the task is still to write a failing test that proves it.
+- **[verify]** = depends on environment (libpcap version, distro, GitHub settings). Confirm with the given command before changing code.
+- Files read: all non-test `.go`, `go.mod`, `Dockerfile`, `Makefile`, `README.md`, `renovate.json`, `.github/workflows/*`, `.githooks/pre-commit`, test file names/greps. Test bodies were only grepped, not audited.
 
 ## Instructions for the agent
 
-- Work top-down by priority. One commit per task ID, message prefixed with the ID.
-- Every behavioural fix needs a test. Use the synthetic-frame helper from the appendix so tests need neither root nor a live interface.
-- Run `gofmt -s`, `go vet ./...`, `go test -race ./...` before finishing each task.
-- Keep `-i/-p/-t/-d/-v` and the long flags backward compatible. Changes to the JSON schema must be called out in the README and bump `VERSION`.
+- Work top-down. One commit per task ID, message prefixed with the ID (e.g. `B1: treat pcap EOF as clean end`).
+- Write the failing test first, then fix. Tests must not need root or a live interface: build frames with `gopacket.SerializeLayers`, write fixtures with `pcapgo` into `testdata/`, replay with `NewOfflinePacketSource`.
+- Before finishing each task: `gofmt -s -l .` (empty), `go vet ./...`, `go test -race ./...`.
+- Keep `-i/-p/-t/-d/-v` and the long flags backward compatible. A JSON schema change must update the README schema block, add/refresh a golden test, and bump `VERSION` **and** `config.Version` together.
 - Locate code by function name; line numbers drift.
 
 ## Behaviour summary (context)
 
-`NewPcapPacketSource` opens a live pcap handle (promiscuous, snaplen 262144, 250 ms read timeout) with BPF `port N`. `NextPacket` returns the UDP/TCP application payload (falling back to the whole raw frame) plus the source IP. `ParseSyslogPacket` accepts the payload if it is valid UTF-8, optionally extracts a hostname (RFC 5424 or 3164 regex). `RunSniffer` keys a `StatsTracker` by that **hostname from the message** (fallback: source IP, then `"Unknown"`), keeping a count and the first message as sample. Output is pretty JSON `{interval_seconds, hosts{host:{count,sample}}}`, once at the end or every `--frequency` seconds with `--periodic`.
+`main` builds a `PacketSource` (live pcap on `any`/`-i`, or `-r file`), BPF `dst port N`, and calls `app.RunSniffer`. The loop pulls `PacketData{Data, SrcIP, NoPayload}`, drops TLS-looking payloads, splits payloads on `\n`, parses each line with `syslog.Parse` (PRI ≤ 191, optional octet-count prefix, claimed hostname via three regexes) and records into `stats.Tracker`, keyed by source IP, with first-message sample. Output is one JSON document at the end, or one per `--frequency` seconds with `--periodic`.
 
 ---
 
 ## P0 — correctness
 
-### [x] B1. Anything that is valid UTF-8 is counted as syslog **[probed]**
-- **Where:** `syslog.ParseSyslogPacket`; `capture.PcapPacketSource.NextPacket` (raw-frame fallback).
-- **Problem:** The only gate is `utf8.Valid`. The old code at least required `<digits>`. Now:
-  - A UDP datagram `GET / HTTP/1.1\r\n` on port 514 is counted as a syslog event (host = source IP, sample = that text). Probe result: `COUNTED as syslog`.
-  - The "first `<` anywhere" heuristic discards leading bytes, so a payload merely containing `<` is treated as syslog starting there.
-  - PRI is never range-checked: `<999>Oct 11 22:14:15 evil x: y` is accepted, host `evil`.
-  - `NextPacket` falls back to `pkt.Data()` (the **entire Ethernet frame**) when `ApplicationLayer()` is nil, i.e. for pure TCP ACK/SYN-ACK segments and empty UDP datagrams. Because `port N` also matches the collector's replies (B3), these frames arrive constantly. They are rejected only when the frame bytes happen to be invalid UTF-8. Probe: 13 of 2000 loopback-style pure-ACK frames (0.65%) were counted as syslog events with a binary-garbage sample. On a real network the rate depends on MAC/checksum bytes, but it is nonzero and the sample is junk.
+### [x] B1. `-r file.pcap` always exits 1 at end of file **[static]**
+- **Where:** `capture.PcapPacketSource.NextPacket` (returns `io.EOF` when the channel closes, for live *and* offline), `app.RunSniffer` (EOF → `captureErr` → returned), `main` (exit 1).
+- **Problem:** Reaching the end of a pcap is the normal way a replay finishes, but it is reported as `Error: capture stream closed: EOF` with exit code 1 (the README lists "closed capture stream" under exit 1). All app tests use `ReturnEOFOnExhaust` to simulate a *failure*, so the offline success path has no test; `main_test.go` only covers `-r` with a missing file.
+- **Related defects in offline mode:**
+  - Interval defaults to 10 s of wall-clock even for `-r`, so a large pcap is silently cut off after 10 s while the report looks complete.
+  - `start_time`/`end_time` are wall-clock "now", not packet timestamps, so a replay of yesterday's capture reports today's time and a 1–2 s window.
 - **Fix:**
-  1. In `NextPacket`, if there is no application layer return "no payload" (skip), never `pkt.Data()`.
-  2. In the parser, require the message to start with `<PRI>` where PRI is 1–3 digits and ≤ 191, optionally preceded by an RFC 6587 octet-count prefix (`^\d+ `). Drop the "first `<` anywhere" heuristic.
-  3. Return a typed reason for rejection (`ErrNotSyslog`, `ErrEmpty`) so the app can count ignored packets (see S5).
-- **Acceptance:** table-driven tests for: valid 5424, valid 3164, octet-counted, `GET / HTTP/1.1`, `<999>`, text with `<` in the middle, empty payload, pure TCP ACK frame, SYN-ACK frame, empty UDP frame. Only the valid ones are counted.
+  1. Distinguish the two cases: offline end-of-file → `io.EOF` (clean finish, exit 0); live channel closed → `capture.ErrCaptureClosed` (error, exit 1). Update `testutil.MockPacketSource` so the "failure" tests return `ErrCaptureClosed` and add an "offline-style EOF = success" test.
+  2. When `-r` is given and `-t` was not explicitly set, default to unlimited (`0`).
+  3. Add `Timestamp time.Time` to `PacketData` (from `pkt.Metadata().Timestamp`); in offline mode derive `start_time`/`end_time`/`interval_seconds` from first/last packet timestamp.
+- **Acceptance:** `go test` that replays a fixture pcap (>10 s of packet timestamps, a few hundred packets) through the real `NewOfflinePacketSource` + `RunSniffer` and asserts: nil error, all expected hosts/counts present, report window equals the pcap's time span. CLI test in `main_test.go` asserting exit code 0 for `-r testdata/x.pcap`. A live-closed-channel test still exits 1.
 
-### [x] B2. Valid syslog that is not valid UTF-8 is silently dropped **[probed]**
-- **Where:** `ParseSyslogPacket` (`if !utf8.Valid(...) { return nil }`).
-- **Problem:** `<13>Oct 11 22:14:15 h app: caf\xc3` (a message truncated mid-multibyte-character, which senders that truncate at a size limit produce routinely) is rejected and **not counted at all**. The same applies to Latin-1 hostnames or message bodies. A tool whose job is to discover who is sending syslog should not make senders disappear.
-- **Fix:** Count the packet, and sanitize only the sample: `strings.ToValidUTF8(msg, "\uFFFD")`, or add `"sample_encoding":"base64"` when the payload is not valid UTF-8. Never drop.
-- **Acceptance:** the probe case above yields a host entry with count 1 and a valid-JSON sample.
+### [x] B2. `interval_seconds` is the nominal value, not the measured one **[static]**
+- **Where:** `app.RunSniffer` final-report block (`interval = cfg.Interval` when not periodic).
+- **Problem:** Ctrl-C after 3 s of a `-t 10` run still reports `interval_seconds: 10`; `-t 0` (unlimited) reports `interval_seconds: 0`. Anyone computing msgs/s from `count / interval_seconds` gets wrong or divide-by-zero results. `start_time`/`end_time` are right, so the output contradicts itself.
+- **Fix:** Always report measured elapsed (`ceil(end-start)`, min 1) in every mode; keep the field name. (Offline mode: packet-timestamp span, see B1.)
+- **Acceptance:** test with a cancelled context after ~100 ms and `Interval=10` → `interval_seconds` ≤ 1; test `Interval=0` → ≥ 1; periodic windows already use measured values, keep them tested.
 
-### [x] B3. BPF `port N` matches both directions
-- **Where:** `NewPcapPacketSource` (`filter := fmt.Sprintf("port %d", port)`).
-- **Problem:** Replies from the collector (TCP ACKs, SYN-ACKs with source port 514) are captured too. Together with B1 they pollute counts and produce false hosts keyed by the collector's own IP.
-- **Fix:** default to `dst port N`; optionally `--direction dst|src|both`. Multiple ports: `--port 514,601` → `(dst port 514 or dst port 601)`.
-- **Acceptance:** test with a synthetic TCP handshake plus data plus ACKs: only the sender is counted with the default. Unit-test the generated filter string.
-
-### [x] B4. Host key is sender-controlled and the real source address is lost **[probed]**
-- **Where:** `app.RunSniffer` (hostname selection), `stats.StatsTracker`.
-- **Problem:** Entries are keyed by the *hostname claimed inside the message*. Consequences:
-  - One IP can create unlimited keys by varying the hostname field (see S1), and many machines claiming the same name merge into one entry.
-  - Output never shows the sending IP when a hostname was parsed, which defeats the main use case ("who is sending syslog to this box?").
-  - RFC 5424 NILVALUE `-` is used as a real hostname. Probe: `<165>1 2026-11-07T12:00:00Z - app 1 - - msg` → key `"-"`.
-  - The 5424 regex requires `\d` + whitespace after PRI, so rsyslog's default high-precision 3164 variant (`<13>2026-11-07T12:00:00+01:00 myhost app: msg`) gets no hostname (probe: `host=""`) and silently falls back to the IP.
-- **Fix:** Key by source IP (`netip.Addr`); keep `hostname` (claimed) as a field, plus `src_ip`. Treat `-` as empty. Validate claimed hostnames (≤255 bytes, printable, no whitespace). Support the ISO-timestamp 3164 variant. Optionally keep `--group-by ip|hostname`.
-- **Acceptance:** two IPs claiming the same hostname produce two entries; one IP varying hostnames produces one entry; `-` never appears as a hostname.
-
-### [x] B5. Capture failure is swallowed; persistent errors would spin
-- **Where:** `PcapPacketSource.NextPacket`, `app.RunSniffer`.
-- **Problem:** When the packet channel closes (interface down, pcap error) `NextPacket` returns `(nil, nil)` forever; the loop sleeps 10 ms per iteration until the interval ends, prints an empty `{"hosts":{}}` and exits 0. Separately, the `err != nil → continue` path has no backoff or limit; if a source ever returns persistent errors this spins at 100% CPU for the whole interval.
-- **Fix:** Return `io.EOF` (or a typed `ErrCaptureClosed`) from `NextPacket` when the channel is closed; `RunSniffer` returns an error (exit 1, message on stderr, partial results still printed). Add a consecutive-error limit with small backoff.
-- **Acceptance:** test with a source that returns EOF early → non-nil error and exit code 1; test with a source that returns errors forever → returns after N errors.
-
----
-
-## P1 — robustness and security
-
-### [x] S1. Unbounded memory from untrusted input
-- **Where:** `stats.StatsTracker`, `syslog.rfc*Regex` (`\S+` has no length bound), `PacketData.Data`.
-- **Problem:** The host map is keyed by a sender-controlled string of unbounded length, and each entry stores the whole first message (up to ~64 KB for UDP, more for TCP). A single sender can grow memory without limit; `GetSummary` then copies everything again.
-- **Fix:** `--max-hosts` (default 10000) with an `overflow_events` counter in the output when the cap is hit; truncate hostname to 255 bytes and the sample to a configurable `--sample-bytes` (default 2048) with a `sample_truncated` boolean.
-- **Acceptance:** test feeding > max-hosts distinct keys and a 64 KB message: map size and sample length stay capped, overflow counter is reported.
-
-### [x] S2. `--periodic` stops after `-t`; there is no "run until signalled"
-- **Where:** `config.ParseArgs`, `app.RunSniffer`.
-- **Problem:** Periodic mode is bounded by `Interval` (default 10 s), so `--periodic --frequency 5` produces two reports and exits unless the user also passes a large `-t`. `-t 0` is indistinguishable from "unset" (the code uses 0 as sentinel for both port and interval), so infinite capture can't be requested. Huge values of `Interval`/`Frequency` overflow `time.Duration` (uint64 → int64) and make the loop exit immediately.
-- **Fix:** Detect explicitly-set flags with `fs.Visit`; define `-t 0` = unlimited; make periodic default to unlimited; validate upper bounds (`≤ 1<<31` seconds or use `time.Duration` with overflow check).
-- **Acceptance:** config tests for explicit 0, unset, huge values; app test showing periodic mode emits ≥ 3 reports with a mock source and a fake clock.
-
-### [x] S3. Config validation and the `eth0` default
-- **Where:** `config.ParseArgs`.
-- **Problem:** `-p 70000` or `-p -5` fail later as an opaque BPF error. The default interface `eth0` doesn't exist on most modern Linux hosts (predictable names like `enp3s0`) and in many containers, so the zero-argument run fails with `failed to open interface eth0`.
-- **Fix:** Validate port 1–65535 in `ParseArgs`. Default to `any` on Linux (supported by libpcap) or, on failure to open, list candidates via `pcap.FindAllDevs()` in the error message. Add `--list-interfaces`.
-- **Acceptance:** tests for out-of-range ports; error message for an unknown interface contains the available device names.
-
-### [x] S4. Kernel/interface drops are invisible, so counts are only lower bounds
-- **Where:** `capture` (no use of `handle.Stats()`); README says "high-performance".
-- **Fix:** On `Close()`/end of run read `handle.Stats()` and report `capture_stats {received, dropped, if_dropped}` (stderr in debug mode, and as an optional JSON object). For busy collectors use `pcap.NewInactiveHandle` + `SetBufferSize` before `Activate`.
-- **Acceptance:** stats appear in debug output; documented in README as "counts are lower bounds when drops > 0".
-
-### [x] S5. Silent ignoring and protocol limitations
+### [x] B3. Periodic mode: counters leak across windows and are lost at shutdown **[static]**
+- **Where:** `app.RunSniffer` periodic block and final-report condition (`!cfg.Periodic || !statsTracker.IsEmpty()`); `stats.Tracker.IsEmpty` (looks at hosts only).
 - **Problem:**
-  - TCP is handled per segment (no reassembly): several newline-framed messages in one segment count as 1; a message split across segments yields junk samples.
-  - TLS syslog (usually 6514) is encrypted; after B1 it will be rejected with no hint to the user.
-  - UDP fragments: later fragments carry no ports and are not matched by `port N`; the first fragment is a truncated message.
-  - There's no counter for packets that were seen and ignored.
-- **Fix:** Add `ignored` counters to the output (`no_payload`, `not_syslog`, `non_utf8_sanitized`), detect a TLS ClientHello (`0x16 0x03`) and report `"tls_suspected": true` for that source, split newline-framed TCP payloads into separate events, and document the remaining limitations in the README. Optional later: `gopacket/tcpassembly`.
-- **Acceptance:** tests for a multi-message TCP segment (count = number of messages) and a TLS-looking payload.
+  - A window with only ignored traffic (non-syslog, no-payload, TLS-less garbage) has no hosts, so `IsEmpty()` is true: no report, no `SnapshotAndReset`, but `lastReportTime = now` still advances. The `ignored` counters (and `overflow_events`) from that window are then added to the *next* non-empty report whose `start_time` is later. Wrong attribution.
+  - The final report is skipped in periodic mode if the last window has ignored-only traffic, so those counts vanish.
+  - Quiet windows produce no output at all, so a consumer cannot tell "no syslog arrived" from "sniffer died".
+- **Fix:** Always `SnapshotAndReset` at each window boundary. Emit if hosts non-empty **or** any ignored/overflow counter non-zero; add `--emit-empty` (default false) to emit heartbeat reports. Define `IsEmpty` as "nothing at all to report" or replace it with `HasData()`.
+- **Acceptance:** tests with a fake clock/mock source: (a) ignored-only window then a host window → second report's `ignored` contains only its own counts; (b) ignored-only final window is still emitted; (c) `--emit-empty` emits `hosts: {}` every window.
 
-### [x] S6. Sample content handling
-- **Problem:** Samples are raw log lines (possibly secrets/PII) printed to stdout; `--debug` prints every full message to stderr with control characters unescaped (terminal escape injection). JSON output itself is escaped correctly (`SetEscapeHTML(false)`; control chars stay `\uXXXX`).
-- **Fix:** Add `--no-sample` and `--redact-sample` options; print debug messages with `%q`; add a "Security considerations" section to the README.
-- **Acceptance:** test that a sample containing ESC is escaped in debug output; `--no-sample` output has no `sample` field.
+### [x] B4. The "strictly bounded memory" claim is false: samples and hostnames pin whole messages **[static]**
+- **Where:** `stats.Tracker.formatSample` (`message[:st.sampleBytes]`), `syslog.cleanHostname` (returns a substring of the regex match), `syslog.Parse` (`strings.ToValidUTF8(string(payloadBytes), …)` returns the same string when already valid).
+- **Problem:** In Go a substring shares the backing array of its parent. Each host's stored `Sample` (≤ 2048 bytes) and `Hostname` (≤ 255) keep the **entire original message** alive (up to ~64 KB for UDP, more for TCP). Worst case is `max-hosts × message size` (10 000 × 64 KB ≈ 640 MB), not `max-hosts × sample-bytes` (≈ 20 MB). The README "Resource Exhaustion Bounds" paragraph and v2's definition of done both assert the smaller bound.
+- **Fix:** `strings.Clone` the sample and hostname before storing. Better: let `Parse` work on `[]byte`, and only materialise strings for (a) the 255-byte hostname and (b) the sample when a **new** host entry is created, instead of converting the whole payload to a string for every packet (that is also the main per-packet allocation; see D3).
+- **Acceptance:** a test that inserts N=2000 distinct IPs, each with a 64 KB message, calls `runtime.GC()`, and asserts `HeapAlloc` growth is under ~`N × (sampleBytes + 1 KB)`. It must fail before the fix. Update README wording only after the test passes.
 
----
-
-## P2 — design and code quality
-
-### [x] R1. Capture performance and the "high-performance" claim
-- `gopacket.NewPacketSource` is used with default `DecodeOptions` (copies each packet, decodes all layers eagerly); `NextPacket` allocates a `time.After` timer on every call. No benchmark exists.
-- **Fix:** set `DecodeOptions{Lazy: true, NoCopy: true}` (copy the payload before storing), reuse one `time.Timer` or restructure around the channel/ctx, add `BenchmarkParseSyslogPacket` and a replay benchmark over a synthetic 100k-packet pcap; either keep the README claim with numbers or drop it.
-
-### [x] R2. Test double in production package; add offline source
-- `MockPacketSource` is defined in `capture.go` (non-test file), so it is exported API and compiled into the binary. Move it to a `_test.go` file or `internal/testutil`.
-- Add `OfflinePacketSource` (`pcap.OpenOffline`) and a `-r file.pcap` flag. It enables fixtures, regression tests and analysing captures from other machines.
-
-### [x] R3. Layout and naming
-- App-private code lives in `pkg/` (importable by anyone); move to `internal/`.
-- Stutter: `stats.StatsTracker`, `syslog.SyslogPacket`, `syslog.ParseSyslogPacket`, `stats.JsonSummary` → `stats.Tracker`, `syslog.Message`, `syslog.Parse`, `JSONSummary`.
-- `interface{}` → `any`; `err == flag.ErrHelp` in `main` → `errors.Is`; `PacketData.SrcIP string` → `netip.Addr` (avoids a string allocation per packet).
-
-### [x] R4. `StatsTracker` snapshot is not atomic
-- Periodic mode calls `GetSummary` then `Clear` as two lock acquisitions. Safe today (single goroutine), a trap once a ticker goroutine or HTTP endpoint exists. Add `SnapshotAndReset(interval)` that swaps the map under one lock.
-
-### [x] R5. Periodic output is not machine-friendly
-- It emits concatenated pretty-printed JSON documents, which are awkward for log shippers. Add `--format json|ndjson` (compact, one object per line). Intermediate reports put the nominal `--frequency` in `interval_seconds`, not the measured elapsed time; report `start`/`end` timestamps instead.
-
-### [x] R6. CLI ergonomics
-- Short/long flag pairs are defined twice with "long wins" precedence and 0-as-unset (see S2). The `DEBUG=1` environment variable is undocumented. Consider a single definition per option with an alias helper. Generated `-h` output lists short and long variants as separate flags with duplicated defaults.
+### [x] B5. `--debug` bypasses `--no-sample` / `--redact-sample` **[static]**
+- **Where:** `app.RunSniffer` debug line `Captured from %s (claimed=%s): %q`.
+- **Problem:** The README's "Sensitive Data & Sample Suppression" promises that samples can be omitted or redacted, but debug mode prints every full message to stderr regardless, and `DEBUG=1` in the environment enables it silently. For a security tool this is the one place secrets and PII leak.
+- **Fix:** Debug logging honours the same options: with `--no-sample` or `--redact-sample` print only length, source IP and claimed hostname; otherwise truncate to `--sample-bytes`. Mention in README that `--debug` is not for production.
+- **Acceptance:** test that a message containing a token string never appears in stderr when `RedactSample`/`NoSample` is set with `Debug` on.
 
 ---
 
-## P3 — tests
+## P1 — protocol handling and silent undercounting
 
-### [x] T1. Parser
-- Add table-driven cases from B1/B2/B4 plus `FuzzParseSyslogPacket` asserting: no panic, returned message is valid UTF-8, `json.Marshal` of the result round-trips.
-- Existing `TestParseNoHostname` asserts that plain text without PRI is accepted as syslog; it encodes the B1 bug and must be changed.
+### [x] F1. Message framing ignores the transport; octet-counting is only half-implemented **[static]**
+- **Where:** `syslog.SplitMessages` (newline split for everything), `syslog.Parse` (`headerPrefixRegex` accepts `(\d+)\s+` but never uses the number), `capture.PacketData` (no transport info).
+- **Problem:**
+  - **UDP:** RFC 5426 says one datagram is one message. Splitting on `\n` turns every multi-line message (stack traces, some appliance logs) into one valid message plus N `not_syslog` ignores. `count` is right by accident, `ignored.not_syslog` is inflated.
+  - **TCP, octet-counted (RFC 6587):** frames like `59 <34>…62 <13>…` in one segment are not newline-separated, so they count as **one** message; the length is never validated or used to find the boundary.
+  - **TCP, newline-framed:** works, but retransmitted segments and messages split across segments are counted/ignored per segment (no reassembly).
+  - Inconsistency: the no-newline path returns the payload untouched, the multi-line path `TrimSpace`s each line (trailing `\r`, `\0` handling differs).
+- **Fix:** Add `Transport` (`udp|tcp`) to `PacketData` from the decoded layers. UDP: no splitting, trim only trailing `\r\n\x00`. TCP: if payload matches `^\d+ <`, parse octet-counted frames using the length (reject frames whose length overruns the segment and count them as `not_syslog`); else split on LF. Keep the documented "no TCP reassembly" limitation; optionally add `gopacket/tcpassembly` later behind a flag.
+- **Acceptance:** table tests for: UDP multi-line datagram (1 message, 0 ignored), TCP two octet-counted frames in one segment (2 messages), octet length longer than payload (ignored), TCP LF-framed three messages (3), UDP with trailing `\x00`.
 
-### [x] T2. Capture conversion
-- `NextPacket`'s packet-to-`PacketData` logic (the part that matters) has no tests; capture coverage is 60% from the mock and the invalid-interface test only. Build frames with `gopacket.SerializeLayers` (appendix) for: TCP pure ACK, SYN-ACK, empty UDP, UDP with payload, IPv6, 802.1Q VLAN.
+### [x] F2. Decode failures and unsupported link types look like `no_payload` **[static]** / default `any` on newer libpcap **[verify]**
+- **Where:** `capture.PcapPacketSource.NextPacket` (never looks at `pkt.ErrorLayer()`), constructors (never validate `handle.LinkType()`), `go.mod` (`github.com/google/gopacket v1.1.19`).
+- **Problem:** A packet that fails to decode, or a link type gopacket cannot decode, ends up with no IP layer and is counted as `ignored.no_payload`. The tool then prints a "successful" report with zero hosts. The default interface is `any`; on Linux that is a cooked capture, and newer libpcap versions can hand out `DLT_LINUX_SLL2`. v1.1.19 of the original gopacket has no SLL2 decoder as far as I know.
+- **Verify:** on each target distro run `tcpdump --list-data-link-types -i any` and check which type the default is, and whether `go run . -i any -t 5` sees traffic you generate with `logger -n 127.0.0.1 -P 514 test`.
+- **Fix:**
+  1. Add `ignored.decode_errors`; count when `pkt.ErrorLayer() != nil`.
+  2. After `Activate`/`OpenOffline`, check `handle.LinkType()` against the supported set; if unsupported, either `SetDatalink` to a supported one or fail with a message naming the link type and suggesting `-i <real interface>`.
+  3. v2 item C7 ("evaluate the `github.com/gopacket/gopacket` fork") is ticked but `go.mod` is unchanged and no decision is recorded. Either migrate or record why not in the README.
+- **Acceptance:** unit test feeding a truncated IPv4 frame → `decode_errors == 1`, `no_payload == 0`; test that an unsupported link type produces a clear error (use a pcap fixture with that link type).
 
-### [x] T3. App
-- Add tests for: source returns EOF (B5), overflow cap (S1), periodic emits multiple reports (S2), golden JSON for the schema, `--no-sample` (S6). Add a test for `main` exit codes via `exec` of the built binary (version, bad flag, unknown interface).
+### [x] F3. `capture_stats` is cumulative but the host counts are per window **[verify]**
+- **Where:** `app.RunSniffer` (`source.Stats()` → `SetCaptureStats` at each periodic report).
+- **Problem:** `pcap_stats` counters are totals since the handle was opened. In periodic mode each report shows the running total of `received/dropped` next to host counts that were reset, so the two cannot be compared and drops cannot be attributed to a window.
+- **Verify:** run `--periodic --frequency 2` against steady traffic and watch `received` grow monotonically while `count` stays flat.
+- **Fix:** keep the previous snapshot in `RunSniffer` and report deltas per window (clamp at 0), plus a documented `capture_stats_total` only in the final report if wanted.
+- **Acceptance:** mock source whose `Stats()` returns increasing totals → each periodic report contains the delta.
+
+### [x] F4. BPF filter may miss VLAN-tagged and extension-header IPv6 traffic **[verify]**
+- **Where:** `capture.BuildBPFFilter`.
+- **Problem:** libpcap's `dst port N` does not match 802.1Q-tagged frames when the tag is in-band (typical on SPAN/mirror ports and trunk captures), and does not follow IPv6 extension headers. A discovery tool then silently reports nothing for those senders.
+- **Verify:** build a pcap with a tagged UDP/514 frame and check `NewOfflinePacketSource` returns it.
+- **Fix:** emit `(dst port N) or (vlan and dst port N)`; document IPv6 extension-header and fragment limitations next to the existing UDP-fragment note. Keep the generated filter covered by a unit test and compile-check it with `pcap.CompileBPFFilter` for Ethernet.
+
+### [x] F5. Multi-port and direction exist in the code but not in the CLI
+- **Where:** `main.go` hardcodes `"dst"` and `cfg.Port` is a single `int`; `BuildBPFFilter` already supports `src`/`both` and several ports.
+- **Problem:** Real deployments use 514 (UDP+TCP), 601, 6514. Currently they need separate runs, and the multi-port/direction code is untested through the CLI.
+- **Fix:** accept `-p 514,6514` (comma list, each 1–65535) and `--direction dst|src|both` (default `dst`); thread through `Config`, both constructors, README.
+- **Acceptance:** config tests for lists/invalid entries; filter-string tests; an offline test where only the second port's traffic is present.
 
 ---
 
-## P4 — CI, packaging, supply chain
+## P2 — security hardening and robustness
 
-### [x] C1. Image tags are mutable and published on every push to `main`
-- **Where:** `.github/workflows/ci.yml`, job `publish-docker` (`if: github.ref == 'refs/heads/main' || github.event_name == 'release'`).
-- **Problem:** Each push to `main` pushes `latest` **and** the `VERSION` tag (and semver tags derived from it). A version tag like `0.1.0` is overwritten until someone bumps `VERSION`. The README says `latest` "tracks the latest release", which is not true.
-- **Fix:** Push `<version>`/semver/`latest` only on release events or when `VERSION` changed; on plain pushes publish `edge` and `sha-<short>`. The `draft-release` job compares `VERSION` with `HEAD~1` only; use `github.event.before` so multi-commit pushes don't miss a bump. Expose the "changed" output and reuse it.
+### [x] S1. Stats: sender-controlled fallback key, silent TLS drop, zero-count hosts
+- `Tracker.AddEntry` keeps a second map `namedStats` keyed by the *claimed hostname* when `srcIP` is invalid. That reintroduces the sender-controlled key the schema change was meant to remove. It should be unreachable for IP packets: remove `namedStats` and the `AddEntryString` fallback, or key the fallback by a fixed `"unknown"` only.
+- `RecordTLS` silently does nothing when `max-hosts` is reached (no `overflow_events`), and creates hosts with `count: 0` and no sample; those hosts make `IsEmpty()` false. Count the overflow and decide/document whether zero-count TLS hosts belong in `hosts`.
+- `formatSample` truncates at a byte offset and can split a UTF-8 rune; the JSON encoder then silently substitutes U+FFFD. Truncate at a rune boundary (`utf8.RuneStart`).
+- `cleanHostname` truncates >255-byte tokens to a bogus 255-byte hostname; reject instead.
+- **Acceptance:** tests for each bullet (overflow counted for TLS at cap; sample never ends mid-rune; 300-byte hostname → empty hostname).
 
-### [x] C2. Two dependency bots on the same repo
-- Both `.github/dependabot.yml` (gomod, weekly) and `renovate.json` (+ `bin/renovate/run.sh`) are active; git history shows PRs from both (for example the `golang.org/x/net` bump). Pick one (Renovate also covers Actions and Docker). In `run.sh` stop using `ghcr.io/renovatebot/renovate:latest`; pin it. Enable `pinDigests` for Actions and Docker base images.
+### [x] S2. Relays hide the real senders
+- One entry per source IP stores only the first non-empty claimed hostname. Behind an rsyslog/syslog-ng forwarder, a hundred hosts collapse into one entry with one hostname.
+- **Fix (optional feature):** add a bounded `claimed_hostnames` list (max N, default 8) plus `claimed_hostnames_total` per entry, so relays are visible without unbounded memory.
 
-### [x] C3. Workflow hardening
-- Top-level `permissions: contents: write, packages: write` is the default for every job; set top-level `contents: read` and grant per job (several jobs already override).
-- Actions are pinned by major tag, not commit SHA. For a security tool, pin by SHA (Renovate can maintain them).
-- `build-and-test` commits `coverage.svg` back to `main` via `git-auto-commit-action`, creating bot commits and requiring write access to the default branch (breaks with branch protection). Prefer Codecov, a gist badge, or generating the badge at release time.
+### [x] S3. Parser coverage gaps affect common network gear
+- RFC 3164 regex only accepts `Mmm dd hh:mm:ss`. It misses `Oct 11 2026 22:14:15`, fractional seconds, Cisco `*`/`.` NTP markers and sequence-number prefixes (`<189>1234: …`); hostname is then silently empty and the host shows only by IP.
+- RFC 5424 regex accepts any single digit as VERSION; PRI accepts leading zeros (`<007>`).
+- **Fix:** extend regexes (or hand-write a small header scanner on bytes, which also helps D3); only treat the 5424 path as valid when VERSION is `1`.
+- **Acceptance:** table-driven cases for each variant; keep both existing fuzz targets green and add a seed corpus entry for each.
 
-### [x] C4. Missing checks
-- Add to CI: `golangci-lint` (or `staticcheck`), `govulncheck ./...`, `go mod tidy` + `git diff --exit-code`, `hadolint Dockerfile`, a container scan (Trivy/Grype), SBOM and provenance (`sbom: true`, `provenance: mode=max` on `docker/build-push-action`) and image signing (cosign keyless). The README positions this as parity with `rust_syslog_sniffer`, which has SBOM generation; this repo has no `make sbom`.
+### [x] S4. Config silently rewrites bad input
+- `--max-hosts <= 0` becomes 10000 and `--sample-bytes <= 0` becomes 2048 with no message (a user passing `0` probably meant "none", which is `--no-sample`). Return an error instead.
+- `--no-sample` + `--redact-sample` together: one silently wins. Error or document precedence in `-h`.
+- `-r` combined with `-i`/`--promisc` ignores them silently; warn or error.
+- `--periodic` with the default `json` format emits concatenated pretty-printed documents. Default to `ndjson` when `--periodic` is set and `--format` was not given.
+- **Acceptance:** config tests for each case.
 
-### [x] C5. Dockerfile
-- Runtime stage installs `libpcap-dev` (headers and toolchain dependencies); the runtime library package (`libpcap0.8` on bookworm) is enough.
-- Runs as root; there is no `USER`. Try `setcap cap_net_raw+ep` on the binary and a non-root user; document `--cap-drop=ALL --cap-add=NET_RAW`.
-- `--cap-add=NET_ADMIN` is recommended everywhere, but the code only needs raw capture; NET_ADMIN is probably unnecessary once promiscuous mode is optional (N1). **[verify]** by running with only `NET_RAW`.
-- No `.dockerignore` (`COPY . .` sends `.git`, binaries, coverage files); base images referenced by tag only; the sibling Rust image uses Debian Trixie while this one uses Bookworm.
+### [x] S5. Signal handling: second Ctrl-C does nothing
+- `signal.NotifyContext` keeps swallowing SIGINT until `cancel` runs at exit. If `handle.Close()` blocks (it can wait for the 250 ms read timeout, longer on a stuck interface), the user cannot force-quit.
+- **Fix:** after the context is done, call the stop function in a goroutine (`go func(){ <-ctx.Done(); cancel() }()`) so a second signal uses the default action.
 
-### [x] C6. README accuracy
-- Options list omits `-v/--version` and the `DEBUG=1` env var.
-- Prerequisites say `apt install golang`; on Ubuntu 24.04 that installs Go 1.22 while `go.mod` requires 1.25.0 (works only via toolchain auto-download). State the required version.
-- "Retains complete syslog payloads … without truncation" conflicts with S1; "high-performance" is unmeasured (R1); Docker tag table is wrong (C1).
-- Missing sections: privileges (`sudo` vs `setcap`), limitations (S5), security considerations (S6), JSON schema, exit codes.
+---
 
-### [x] C7. Dependency health **[verify]**
-- `github.com/google/gopacket v1.1.19` is pinned. Check whether the upstream is still maintained and whether the `github.com/gopacket/gopacket` fork is the better dependency; run `govulncheck`. `golang.org/x/net` is only an indirect requirement (bumped by Dependabot).
+## P3 — design and code quality
 
-### [x] N1. Promiscuous mode is hard-coded
-- `pcap.OpenLive(intf, defaultSnapLen, true, readTimeout)`. Add `--promisc` (default off: the typical use is a collector sniffing its own traffic, and promisc widens what's captured). Lower `snaplen` to e.g. 65535 to match UDP's maximum payload.
+### [x] D1. Remove the "backwards compatibility" aliases from `internal/`
+Nothing outside this module can import `internal/`, so these exist only to keep old tests compiling.
+
+| Symbol | non-test uses | test uses |
+|---|---|---|
+| `syslog.SyslogPacket` | 0 | 0 |
+| `syslog.ParseSyslogPacket` | 0 | 6 |
+| `stats.JsonSummary` | 0 | 8 |
+| `stats.StatsTracker` | 0 | 0 |
+| `stats.NewStatsTracker` | 0 | 6 |
+| `stats.NewStatsTrackerWithLimits` / `WithOptions` | 0 | 2 / 2 |
+| `stats.NewTrackerWithLimits` | only via the alias above | 0 |
+| `stats.Tracker.RecordTLSString` | 0 | 0 |
+| `capture.NewPcapPacketSourceWithDirection` | 0 | 0 |
+| `capture.NewPcapPacketSource` | 0 | 1 |
+
+Migrate the tests to the real names (`Parse`, `JSONSummary`, `NewTracker…`), delete the aliases and wrappers. (Counts are from a grep, re-check after F5, which may change constructor signatures.)
+
+### [x] D2. Deduplicate
+- `stats.GetSummary` and `SnapshotAndReset` copy the same maps with the same loops; extract `buildSummaryLocked`. `SnapshotAndReset` does not need to copy at all, since it replaces the maps; hand the old maps over.
+- `capture.Stats` → `stats.CaptureStats` conversion is written out three times in `app.go`; add a helper or reuse one type.
+- Live and offline constructors repeat the `DecodeOptions`/`PacketSource` setup; extract `newSource(handle, filter)`.
+
+### [x] D3. Performance claims vs reality
+- README says "zero-copy packet slicing" and quotes ~1.1–1.4 M packets/s. In the code the payload is copied in `NextPacket`, then converted to a `string` (second copy) in `Parse`, then regex-matched on the full string. The parser benchmark covers only `Parse`, not the stats path.
+- **Fix:** do B4's byte-based parse, drop the README wording that no longer matches, add an end-to-end benchmark (`NextPacket` → `Parse` → `AddEntry`), record CPU/Go/libpcap in the README next to the numbers or remove them.
+- **[verify]** whether the explicit payload copy is still needed: `gopacket.PacketSource` reads via `ReadPacketData`, which returns a fresh buffer, so `NoCopy` should already be safe. Only drop the copy if a test with aggressive GC and buffer reuse stays green.
+
+### [x] D4. Version in two places
+`VERSION` and `config.Version` both say `0.2.2` and nothing checks they agree (`go run`/`go build` without ldflags uses the constant). Add a test that reads `../../VERSION` and compares, or derive from `debug.ReadBuildInfo()`.
+
+---
+
+## P4 — tests
+
+### [x] T1. Offline end-to-end tests
+There is no CLI-level test that a valid pcap succeeds (only the missing-file case) and the e2e scripts only run live. Add `testdata/*.pcap` fixtures (UDP 514 5424 + 3164, TCP LF-framed, TCP octet-counted, VLAN-tagged, IPv6, TLS ClientHello on 6514, pure ACK, truncated frame) generated by a small `go run ./internal/testutil/gen` or `go test -run TestGenerateFixtures -update`, plus golden JSON outputs. This also gives B1, B3, F1, F2, F4 their test inputs.
+
+### [x] T2. Fuzz the framing and the stats path
+`FuzzParse*` exist for the parser only. Add a fuzz target over `SplitMessages` + `Parse` + `Tracker.AddEntry` + `json.Marshal` asserting: no panic, output valid JSON, sample ≤ `sampleBytes`, hosts ≤ `maxHosts`.
+
+---
+
+## P5 — CI, packaging, supply chain
+
+### [x] C1. Docker e2e does not test the documented privilege model
+`tests/e2e_docker.sh` and `e2e_periodic_docker.sh` run with `--cap-add=NET_ADMIN`; the README and Dockerfile say only `NET_RAW` (with `--cap-drop=ALL`). Run the e2e with exactly the README flags (`--cap-drop=ALL --cap-add=NET_RAW`, default non-root user). Add a test that `--promisc` without `NET_ADMIN` fails with a clear message **[verify]** that promiscuous mode really needs `NET_ADMIN`; if so, document it. Also check `setcap` file capabilities still work under `--security-opt no-new-privileges` (they do not); note it in the README if you recommend that option.
+
+### [x] C2. Unpinned tooling in a security pipeline
+Actions are SHA-pinned, but `ci.yml` installs `govulncheck@latest`, uses `golangci-lint` `version: latest`, and the Makefile `sbom` target runs `aquasec/trivy:latest`. Pin versions (Renovate custom regex manager can keep them current).
+
+### [x] C3. Docker base image digests **[verify]**
+`renovate.json` sets `pinDigests: true` for the `dockerfile` manager, but both `FROM` lines in the Dockerfile are tag-only. Check whether the Renovate PR is open or the manager is not running; pin `golang` and `debian` by digest.
+
+### [x] C4. Orphaned artifact
+`coverage.svg` (74.5%) is committed but nothing references it (not in the README, no workflow writes it). Delete it, or wire up a real badge. Also add `coverage.svg` to `.gitignore` if it is ever generated locally again.
+
+### [x] C5. Image signing (optional)
+SBOM and `provenance: mode=max` are already enabled on the publish step. Keyless `cosign sign` on the pushed digest is the remaining gap (needs `id-token: write` on that job only).
 
 ---
 
 ## Suggested order
 
-1. B1, B2, B3, B5 (each small, independently testable)
-2. T1/T2 alongside, then B4 + S1 (schema change; bump `VERSION`)
-3. S2, S3, S5, S6, S4
-4. R2 (offline source), R1, R3–R6
-5. C1, C2, C3, C4, C5, C6, C7, N1
+1. B1, B2, B3 (small, independent, all in `app`/`capture`); T1 fixtures alongside.
+2. B4 (+ D3 byte-based parse), B5.
+3. F1, F2, F3, F4, F5.
+4. S1–S5, then D1, D2, D4.
+5. T2, C1–C5.
 
 ## Definition of done
 
-- A non-syslog UDP/TCP payload, a bare TCP ACK, or an empty UDP datagram never appears in output.
-- Valid syslog with invalid UTF-8 is counted.
-- Memory use is bounded by `max-hosts × (hostname + sample-bytes)` regardless of input.
-- Capture failure yields a non-zero exit and a clear error.
-- Output is always valid JSON (fuzz-tested); schema documented with a golden test.
-- `go test -race ./...` and the new CI checks pass; version tags are immutable.
+- `-r file.pcap` exits 0, reports the capture's own time window, and is not cut by the default interval.
+- `interval_seconds` equals the measured window in every mode.
+- Periodic reports never carry counters from a previous window, and no counters are dropped at shutdown.
+- A regression test proves heap usage is bounded by `max-hosts × (sample-bytes + hostname + overhead)` regardless of message size.
+- `--debug` never prints a message that `--no-sample`/`--redact-sample` would suppress.
+- UDP datagrams are one message each; TCP octet-counted and LF-framed segments split correctly.
+- Decode errors and unsupported link types are reported, never counted as `no_payload`.
+- `go test -race ./...`, fuzz seeds, and the updated CI checks pass.
 
-## Status of the previous review (old commit `884d292`)
+## Status of v2 (verified by reading the code)
 
-| Old item | Now |
+| v2 item | State |
 |---|---|
-| JSON "un-escape" hack corrupting output | **Fixed** (`SetEscapeHTML(false)` encoder) |
-| Closed channel → nil-pointer panic | **Fixed**, but see B5 (now silent) |
-| Regex compiled per packet | **Fixed** (package-level), but detection regressed (B1) |
-| `OpenLive` timeout of 1000 ns | **Fixed** (250 ms) |
-| No signal handling | **Fixed** (`signal.NotifyContext`) |
-| `panic` on setup errors | **Fixed** (errors, exit 1) |
-| Silent empty output | **Fixed** for non-periodic (prints empty `hosts`) |
-| Global mutable state, single file | **Fixed** (packages, mutex-guarded tracker) |
-| Missing tests/CI/Docker/multi-arch | **Fixed** (unit tests, e2e scripts, multi-arch image, release flow) |
-| BPF `port N` both directions | **Still open** (B3) |
-| Unbounded memory | **Still open, worse** (S1: key is now sender-controlled) |
-| TCP per-segment / TLS | **Still open** (S5) |
-| Promiscuous hard-coded | **Still open** (N1) |
-| JSON schema naming | **Changed** (new schema; see B4 for what's lost) |
-
----
-
-## Appendix: synthetic-frame probe (reuse for T2)
-
-```go
-package capture
-
-import (
-	"net"
-	"testing"
-
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/hellqvio86/go_syslog_sniffer/pkg/syslog"
-)
-
-func frame(t *testing.T, l4 gopacket.SerializableLayer, payload []byte, proto layers.IPProtocol) gopacket.Packet {
-	eth := &layers.Ethernet{SrcMAC: net.HardwareAddr{0, 0, 0, 0, 0, 0}, DstMAC: net.HardwareAddr{0, 0, 0, 0, 0, 0}, EthernetType: layers.EthernetTypeIPv4}
-	ip := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: proto, SrcIP: net.IP{127, 0, 0, 1}, DstIP: net.IP{127, 0, 0, 1}}
-	switch v := l4.(type) {
-	case *layers.TCP:
-		v.SetNetworkLayerForChecksum(ip)
-	case *layers.UDP:
-		v.SetNetworkLayerForChecksum(ip)
-	}
-	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
-	if err := gopacket.SerializeLayers(buf, opts, eth, ip, l4, gopacket.Payload(payload)); err != nil {
-		t.Fatal(err)
-	}
-	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
-}
-
-// Feed a packet through the same conversion the live source uses.
-func run(t *testing.T, name string, pkt gopacket.Packet) {
-	ch := make(chan gopacket.Packet, 1)
-	ch <- pkt
-	p := &PcapPacketSource{packets: ch} // in-package test: handle is nil
-	pd, _ := p.NextPacket()
-	if pd == nil {
-		t.Logf("%-28s -> nil", name)
-		return
-	}
-	if sp := syslog.ParseSyslogPacket(pd.Data); sp == nil {
-		t.Logf("%-28s -> rejected", name)
-	} else {
-		t.Logf("%-28s -> COUNTED host=%q msg=%q", name, sp.Hostname, sp.Message)
-	}
-}
-```
-
-Probe results at `38f7b1a` (expected-after-fix in the right column):
-
-| Input | Today | Should be |
-|---|---|---|
-| UDP `GET / HTTP/1.1\r\n` | counted | ignored (`not_syslog`) |
-| UDP `<999>Oct 11 22:14:15 evil x: y` | counted, host `evil` | ignored (PRI > 191) |
-| UDP `<165>1 … - app …` (NILVALUE host) | counted, host `-` | counted, host from source IP |
-| UDP `<13>2026-11-07T12:00:00+01:00 myhost app: msg` | counted, host `""` → IP | counted, host `myhost` |
-| UDP `<13>Oct 11 22:14:15 h app: caf\xc3` | **dropped** | counted, sample sanitized |
-| UDP with ESC (`\x1b[2J`) in body | counted, JSON-escaped | same, plus escaped in debug output |
-| TCP pure ACK (no payload) | rejected by luck (0.65% counted) | skipped (no payload) |
-| Empty UDP datagram | rejected by luck | skipped (no payload) |
+| B1 parser accepts non-syslog | Fixed (PRI ≤ 191, no raw-frame fallback) |
+| B2 invalid UTF-8 dropped | Fixed (sanitised + counted) |
+| B3 BPF both directions | Fixed (`dst`), but see F4/F5 |
+| B4 host key | Mostly fixed (IP key); `namedStats` fallback remains, see S1 |
+| B5 swallowed capture failure | Fixed for live, **broke offline**, see B1 |
+| S1 unbounded memory | **Not actually fixed**, see B4 |
+| S2 periodic/interval | Fixed, but see B2/B3 |
+| S3 config validation | Fixed (see S4 for silent coercions) |
+| S4 capture stats | Present, semantics wrong in periodic mode, see F3 |
+| S5 ignored counters/TLS | Present; framing still wrong, see F1 |
+| S6 samples | `--no-sample`/`--redact-sample` fixed; debug path leaks, see B5 |
+| R1–R6 | Done; "zero-copy" claim inaccurate, see D3; aliases left behind, see D1 |
+| T1–T3 | Done for unit level; no offline/CLI success test, see T1 |
+| C1 tags, C2 one bot, C3 hardening, C5 Dockerfile, C6 README | Done (see C1–C4 above for leftovers) |
+| C4 missing checks | Mostly done; unpinned tools (C2), no signing (C5) |
+| C7 gopacket fork evaluation | Ticked, `go.mod` unchanged, no recorded decision; see F2 |
+| N1 promisc | Done |
