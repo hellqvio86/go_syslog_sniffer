@@ -45,12 +45,16 @@ func GenerateTestFixtures(targetDir string) error {
 	return nil
 }
 
-func writePcapFile(path string, linkType layers.LinkType, writeFn func(w *pcapgo.Writer) error) error {
+func writePcapFile(path string, linkType layers.LinkType, writeFn func(w *pcapgo.Writer) error) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cErr := f.Close(); err == nil {
+			err = cErr
+		}
+	}()
 
 	w := pcapgo.NewWriter(f)
 	if err := w.WriteFileHeader(65535, linkType); err != nil {

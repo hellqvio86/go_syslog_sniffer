@@ -553,7 +553,7 @@ func TestNewOfflinePacketSource_VLAN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open offline source: %v", err)
 	}
-	defer offlineSource.Close()
+	defer func() { _ = offlineSource.Close() }()
 
 	pd, err := offlineSource.NextPacket()
 	if err != nil {
@@ -601,7 +601,7 @@ func TestNewOfflinePacketSource_MultiPortSecondPortOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open offline multiport: %v", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	pd, err := src.NextPacket()
 	if err != nil {
@@ -658,7 +658,7 @@ func TestDecodeError_TruncatedFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open pcap: %v", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	pd, err := src.NextPacket()
 	if err != nil {

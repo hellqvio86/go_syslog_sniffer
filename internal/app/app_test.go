@@ -216,7 +216,7 @@ func TestRunSniffer_RealOfflinePcapReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open test pcap: %v", err)
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 
 	cfg := &config.Config{
 		PcapFile: pcapPath,
