@@ -411,6 +411,36 @@ func FuzzParse(f *testing.F) {
 	FuzzParseSyslogPacket(f)
 }
 
+func FuzzSplitMessages(f *testing.F) {
+	seeds := [][]byte{
+		[]byte("19 <13>hello world 123"),
+		[]byte("9999999999999 <13>huge length"),
+		[]byte("0000000010 <13>leading zero"),
+		[]byte("-5 <13>negative length"),
+		[]byte("0 <13>zero length"),
+		[]byte("100 <13>truncated"),
+		[]byte("<13>line 1\n<14>line 2\n<15>line 3"),
+		[]byte("<13>no delimiter at all"),
+		[]byte(strings.Repeat("A", 70000)),
+		[]byte("18446744073709551615 <13>overflow"),
+	}
+	for _, seed := range seeds {
+		f.Add(seed, "tcp")
+		f.Add(seed, "udp")
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte, transport string) {
+		msgs := SplitMessages(data, transport)
+		for _, m := range msgs {
+			if len(m) > MaxMessageBytes {
+				t.Fatalf("split message length %d exceeds MaxMessageBytes %d", len(m), MaxMessageBytes)
+			}
+			// Must not panic on parse
+			_, _ = Parse(m)
+		}
+	})
+}
+
 func BenchmarkParseSyslogPacket_RFC5424(b *testing.B) {
 	data := []byte("<165>1 2003-10-11T22:14:15.003Z mymachine.example.com appname 1234 ID47 - An application log entry")
 	b.ReportAllocs()

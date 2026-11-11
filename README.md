@@ -18,9 +18,9 @@ Captures syslog network traffic (UDP/TCP), parses RFC 5424 and RFC 3164 messages
 ## Features
 
 - **Live & Offline Capture**: Uses libpcap / gopacket to capture live network traffic or replay from offline `.pcap` files (`-r / --read-file`).
-- **Syslog Parsing**: Automatically identifies and parses RFC 5424, RFC 3164 (including ISO-8601 high-precision timestamps), and RFC 6587 octet-counted syslog framing.
-- **Source IP Keying**: Entries are strictly keyed by verified source IP (`netip.Addr`) with zero allocations on packet lookup, preventing sender-controlled map explosion.
-- **Bounded Memory**: Memory footprint is bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), reporting `overflow_events` when limits are reached.
+- **Syslog Parsing & Stream Reassembly**: Automatically identifies and parses RFC 5424 and RFC 3164 (including ISO-8601 high-precision timestamps). TCP streams undergo bounded reassembly via `gopacket/tcpassembly` supporting RFC 6587 octet-counting and LF delimiters across split segments.
+- **Source IP Keying**: Entries are strictly keyed by observed packet source IP (`netip.Addr`) with zero allocations on packet lookup, preventing sender-controlled map explosion.
+- **Bounded Memory**: Memory footprint is bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), reporting `overflow_events` when limits are reached. Max message size is bounded to 65,535 bytes.
 - **Flexible Reporting**: Single summary mode or atomic `--periodic` interval reporting.
 - **Machine-Friendly Output**: Formatted JSON or single-line NDJSON (`--format json|ndjson`).
 - **Non-Root Docker Hardening**: Runs as unprivileged user `sniffer` (UID 10001) with Linux capabilities (`--cap-drop=ALL --cap-add=NET_RAW`).
@@ -141,14 +141,20 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 }
 ```
 
-## Protocol Considerations & Limitations
+## Protocol Considerations & Operational Limitations
 
-- **Framing & Transports**: UDP datagrams are treated as exactly one syslog message without splitting on newlines (per RFC 5426). TCP streams support both RFC 6587 octet-counted framing (`<len> <msg>`) and traditional LF line delimiters.
+- **Framing & Transports**: UDP datagrams are treated as exactly one syslog message without splitting on newlines (per RFC 5426). TCP streams undergo full stream reassembly using `gopacket/tcpassembly`, supporting RFC 6587 octet-counted framing (`<len> <msg>`) and traditional LF line delimiters across segment boundaries, out-of-order segments, connection close, and retransmissions.
+- **Accounting & Counter Relationships**:
+  - `capture_stats.received`: Total raw packets delivered by libpcap from the network socket.
+  - `capture_stats.dropped` / `if_dropped`: Packets dropped by kernel buffer exhaustion or the network interface controller before application delivery.
+  - `ignored.no_payload`: Packets captured with zero transport payload (e.g. TCP SYN, pure ACK, FIN without data, empty UDP datagrams).
+  - `ignored.not_syslog`: Packets or frames that do not start with a valid `<PRI>` header (PRI <= 191), or carry invalid framing.
+  - `ignored.decode_errors`: Malformed link-layer or IP packets that failed packet decoding.
+  - `hosts[ip].count`: Successfully parsed syslog messages attributed to that observed source IP. (Note: for TCP streams with multiple messages per segment, `count` can exceed raw TCP packet count).
 - **VLAN Tagging & BPF**: BPF filters automatically match both untagged and 802.1Q in-band VLAN tagged frames (`(dst port N) or (vlan and dst port N)`).
 - **TLS / Encrypted Syslog**: Encrypted TLS connections (e.g. port 6514) cannot be payload-inspected without proxying. TLS handshakes (ClientHello) are identified automatically, reporting `"tls_suspected": true` for that host entry.
-- **Relay Hostname Tracking**: Forwarders and relays (rsyslog, syslog-ng) that consolidate messages retain up to 8 unique claimed hostnames under `claimed_hostnames` and report `claimed_hostnames_total`.
+- **Relay Hostname Tracking**: Forwarders and relays (rsyslog, syslog-ng) that consolidate messages retain up to 8 unique claimed hostnames under `claimed_hostnames`. `claimed_hostnames_total` reports the total cumulative count of messages seen with a claimed hostname, including duplicates.
 - **Kernel & Interface Drops**: On packet capture termination or periodic reporting, kernel and interface statistics (`received`, `dropped`, `if_dropped`) are retrieved via `pcap_stats` and reported in `capture_stats`. In periodic mode, deltas per window are reported.
-- **Ignored Packet Accounting**: Non-payload packets (e.g. TCP pure ACKs, empty UDP datagrams), non-syslog payloads, and link-layer decode errors are tracked in the top-level `ignored` section.
 - **UDP & IPv6 Fragmentation**: Large UDP datagrams that undergo IP fragmentation only match port filters on the first fragment. IPv6 extension headers are not reassembled.
 - **Promiscuous Mode**: Promiscuous mode is disabled by default (`--promisc` to enable). Enabling promiscuous mode generally requires `CAP_NET_ADMIN`.
 - **gopacket Fork Decision**: Evaluated `github.com/gopacket/gopacket`; the project retains `github.com/google/gopacket` v1.1.19 due to stability, pure Go layer decoders, standard CGO libpcap bindings, and broad distribution packaging.
@@ -157,17 +163,25 @@ Entries in `hosts` are keyed by the originating source IP address to prevent sen
 
 - **Sensitive Data & Sample Suppression**: Syslog messages frequently contain secrets, tokens, or PII. Use `--no-sample` to completely omit message samples from JSON reports, or `--redact-sample` to output `"[REDACTED]"` in place of raw packet contents. Debug logging (`--debug`) strictly respects sample suppression and redaction.
 - **Terminal Injection Prevention**: Debug messages logged to `stderr` are safely escaped using `%q` formatting to prevent ANSI escape sequence injection.
-- **Resource Exhaustion Bounds**: The memory footprint is strictly bounded via `--max-hosts` (default 10,000) and `--sample-bytes` (default 2,048), preventing denial-of-service via spoofed source addresses or oversized payloads.
-- **Least Privilege & Capabilities**: The Docker container runs as non-root user `sniffer` (UID 10001) and requires only `CAP_NET_RAW` (`--cap-drop=ALL --cap-add=NET_RAW`). Note: file capabilities via `setcap` are disabled if `--security-opt no-new-privileges` is enforced.
+- **Resource Exhaustion Bounds**: The memory footprint is strictly bounded via `--max-hosts` (default 10,000), `--sample-bytes` (default 2,048), and max syslog message limits (65,535 bytes), preventing denial-of-service via spoofed source addresses or oversized payloads.
+- **Least Privilege & Capabilities**: The Docker container runs as non-root user `sniffer` (UID 10001) and requires only `CAP_NET_RAW` with `--security-opt=no-new-privileges:true --cap-drop=ALL --cap-add=NET_RAW`. No setcap or file capabilities are installed in the container image.
 
 ## Performance & Benchmarks
 
-The capture pipeline uses lazy layer decoding and bounded memory tracking. Benchmarks measured on Intel Core i7-1260P (Linux 6.x, Go 1.26+):
+The capture pipeline uses zero-allocation header parsing, zero-copy TCP assembly, and bounded memory tracking. Benchmarks can be reproduced with:
 
-- **End-to-End Pipeline (Split + Parse + AddEntry)**: ~1,167,000 packets/sec (1.11 µs/op, 81 MB/s throughput)
-- **Syslog Parser (RFC 5424)**: ~1,095,000 packets/sec (1.09 µs/op, 6 allocs/op)
-- **Syslog Parser (RFC 3164)**: ~1,390,000 packets/sec (0.82 µs/op, 6 allocs/op)
-- **Offline Pcap Replay (100k packets)**: ~1,430,000 packets/sec (179 MB/s throughput)
+```bash
+go test -bench=. -run=^$ -benchmem ./...
+```
+
+Measured on 12th Gen Intel Core i7-1260P (Linux 6.8, Go 1.26):
+
+- **End-to-End Pipeline (Split + Parse + AddEntry)**: ~980,000 msgs/sec (1.04 µs/op, 86 MB/s, 9 allocs/op)
+- **TCP Stream Reassembly (Contiguous)**: ~3,135,000 msgs/sec (377 ns/op, 191 MB/s, 5 allocs/op)
+- **TCP Stream Reassembly (Split Segments)**: ~1,789,000 msgs/sec (673 ns/op, 107 MB/s, 7 allocs/op)
+- **Syslog Parser (RFC 5424)**: ~1,000,000 msgs/sec (1.02 µs/op, 7 allocs/op)
+- **Syslog Parser (RFC 3164)**: ~1,334,000 msgs/sec (917 ns/op, 7 allocs/op)
+- **Offline Pcap Replay (100k packets)**: ~1,400,000 packets/sec (175 MB/s throughput)
 
 ## Docker
 
@@ -193,6 +207,7 @@ The container drops all capabilities except `NET_RAW` and runs as non-root user 
 ```bash
 docker run --rm \
   --network host \
+  --security-opt=no-new-privileges:true \
   --cap-drop=ALL \
   --cap-add=NET_RAW \
   ghcr.io/hellqvio86/go_syslog_sniffer:latest --interface any --port 514
@@ -203,6 +218,7 @@ Run with periodic reporting:
 ```bash
 docker run --rm \
   --network host \
+  --security-opt=no-new-privileges:true \
   --cap-drop=ALL \
   --cap-add=NET_RAW \
   ghcr.io/hellqvio86/go_syslog_sniffer:latest \

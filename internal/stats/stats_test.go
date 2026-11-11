@@ -418,3 +418,47 @@ func TestTracker_S2Relays(t *testing.T) {
 		t.Errorf("expected ClaimedHostnamesTotal 10, got %d", h.ClaimedHostnamesTotal)
 	}
 }
+
+func TestTracker_SnapshotImmutability_P1_1(t *testing.T) {
+	st := NewTrackerWithOptions(10, 2048, false, false)
+	ip := netip.MustParseAddr("192.168.1.50")
+	st.AddEntry(ip, "claimed-orig-1", "test msg 1")
+	st.AddEntry(ip, "claimed-orig-2", "test msg 2")
+
+	cs := &CaptureStats{
+		PacketsReceived:  100,
+		PacketsDropped:   5,
+		PacketsIfDropped: 1,
+	}
+	st.SetCaptureStats(cs)
+
+	// Mutating the caller-owned cs pointer must NOT affect tracker
+	cs.PacketsReceived = 999
+	cs.PacketsDropped = 888
+
+	s1 := st.GetSummary(10)
+	if s1.CaptureStats == nil {
+		t.Fatal("expected non-nil CaptureStats in summary")
+	}
+	if s1.CaptureStats.PacketsReceived != 100 || s1.CaptureStats.PacketsDropped != 5 {
+		t.Errorf("tracker CaptureStats was mutated by caller pointer modification: %+v", s1.CaptureStats)
+	}
+
+	// Mutating the summary returned by GetSummary must NOT affect subsequent summaries
+	s1.CaptureStats.PacketsReceived = 777
+	h1 := s1.Hosts[ip.String()]
+	h1.ClaimedHostnames[0] = "mutated-host"
+	h1.ClaimedHostnames = append(h1.ClaimedHostnames, "extra-host")
+
+	s2 := st.GetSummary(10)
+	h2 := s2.Hosts[ip.String()]
+	if h2.ClaimedHostnames[0] != "claimed-orig-1" {
+		t.Errorf("tracker internal ClaimedHostnames was mutated: got %q, want 'claimed-orig-1'", h2.ClaimedHostnames[0])
+	}
+	if len(h2.ClaimedHostnames) != 2 {
+		t.Errorf("tracker internal ClaimedHostnames length was mutated: got %d, want 2", len(h2.ClaimedHostnames))
+	}
+	if s2.CaptureStats.PacketsReceived != 100 {
+		t.Errorf("tracker CaptureStats was mutated through prior summary: got %d, want 100", s2.CaptureStats.PacketsReceived)
+	}
+}

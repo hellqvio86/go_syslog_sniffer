@@ -3,6 +3,7 @@ package syslog
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -66,15 +67,20 @@ type Message struct {
 	WasSanitized bool
 }
 
-// SplitMessages splits syslog messages based on transport (UDP or TCP) and framing.
-func SplitMessages(data []byte, transport ...string) [][]byte {
+// MaxMessageBytes is the maximum allowed syslog message size in bytes (64 KiB - 1).
+const MaxMessageBytes = 65535
+
+// SplitMessages splits syslog messages based on transport ("udp" or "tcp") and framing.
+// For UDP, each datagram represents exactly one message (RFC 5426) and is not split on newlines.
+// For TCP, RFC 6587 octet-counted framing or LF delimiters are parsed.
+func SplitMessages(data []byte, transport string) [][]byte {
 	if len(data) == 0 {
 		return nil
 	}
 
-	t := "udp"
-	if len(transport) > 0 && transport[0] != "" {
-		t = transport[0]
+	t := strings.ToLower(strings.TrimSpace(transport))
+	if t == "" {
+		t = "udp"
 	}
 
 	// UDP: RFC 5426 specifies that each UDP datagram carries exactly one syslog message.
@@ -83,6 +89,9 @@ func SplitMessages(data []byte, transport ...string) [][]byte {
 		trimmed := bytes.TrimRight(data, "\r\n\x00")
 		if len(trimmed) == 0 {
 			return nil
+		}
+		if len(trimmed) > MaxMessageBytes {
+			trimmed = trimmed[:MaxMessageBytes]
 		}
 		return [][]byte{trimmed}
 	}
@@ -98,7 +107,7 @@ func SplitMessages(data []byte, transport ...string) [][]byte {
 				break
 			}
 			msgLen, err := strconv.Atoi(string(rem[:idxSpace]))
-			if err != nil || msgLen <= 0 {
+			if err != nil || msgLen <= 0 || msgLen > MaxMessageBytes {
 				res = append(res, rem)
 				break
 			}
@@ -126,6 +135,9 @@ func SplitMessages(data []byte, transport ...string) [][]byte {
 	for _, l := range lines {
 		trimmed := bytes.TrimRight(l, "\r\x00")
 		if len(trimmed) > 0 {
+			if len(trimmed) > MaxMessageBytes {
+				trimmed = trimmed[:MaxMessageBytes]
+			}
 			res = append(res, trimmed)
 		}
 	}
@@ -141,6 +153,9 @@ func SplitMessages(data []byte, transport ...string) [][]byte {
 func Parse(data []byte) (*Message, error) {
 	if len(data) == 0 {
 		return nil, ErrEmpty
+	}
+	if len(data) > MaxMessageBytes {
+		return nil, fmt.Errorf("message length %d exceeds maximum %d: %w", len(data), MaxMessageBytes, ErrNotSyslog)
 	}
 
 	matches := headerPrefixRegex.FindSubmatch(data)

@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -193,7 +194,7 @@ func TestNextPacket_SyntheticFrames(t *testing.T) {
 				ACK:     true,
 				Seq:     1000,
 				Ack:     2000,
-			}, []byte("<14>TCP syslog"), layers.IPProtocolTCP),
+			}, []byte("<14>TCP syslog\n"), layers.IPProtocolTCP),
 			wantPayload: "<14>TCP syslog",
 			wantSrcIP:   "192.168.1.100",
 			wantDropped: false,
@@ -402,16 +403,16 @@ func TestNextPacket_TCPHandshakeAndData(t *testing.T) {
 		return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
 	}
 
-	// 1. Client -> Server SYN
-	syn := buildDirectionalFrame(clientIP, serverIP, &layers.TCP{SrcPort: 54321, DstPort: 514, SYN: true}, nil)
-	// 2. Server -> Client SYN-ACK
-	synAck := buildDirectionalFrame(serverIP, clientIP, &layers.TCP{SrcPort: 514, DstPort: 54321, SYN: true, ACK: true}, nil)
-	// 3. Client -> Server ACK
-	ack := buildDirectionalFrame(clientIP, serverIP, &layers.TCP{SrcPort: 54321, DstPort: 514, ACK: true}, nil)
-	// 4. Client -> Server DATA (syslog payload)
-	data := buildDirectionalFrame(clientIP, serverIP, &layers.TCP{SrcPort: 54321, DstPort: 514, PSH: true, ACK: true}, []byte("<13>Hello from client"))
-	// 5. Server -> Client ACK
-	serverAck := buildDirectionalFrame(serverIP, clientIP, &layers.TCP{SrcPort: 514, DstPort: 54321, ACK: true}, nil)
+	// 1. Client -> Server SYN (Seq = 1000)
+	syn := buildDirectionalFrame(clientIP, serverIP, &layers.TCP{SrcPort: 54321, DstPort: 514, SYN: true, Seq: 1000}, nil)
+	// 2. Server -> Client SYN-ACK (Seq = 2000, Ack = 1001)
+	synAck := buildDirectionalFrame(serverIP, clientIP, &layers.TCP{SrcPort: 514, DstPort: 54321, SYN: true, ACK: true, Seq: 2000, Ack: 1001}, nil)
+	// 3. Client -> Server ACK (Seq = 1001, Ack = 2001)
+	ack := buildDirectionalFrame(clientIP, serverIP, &layers.TCP{SrcPort: 54321, DstPort: 514, ACK: true, Seq: 1001, Ack: 2001}, nil)
+	// 4. Client -> Server DATA (syslog payload, Seq = 1001, Ack = 2001)
+	data := buildDirectionalFrame(clientIP, serverIP, &layers.TCP{SrcPort: 54321, DstPort: 514, PSH: true, ACK: true, Seq: 1001, Ack: 2001}, []byte("<13>Hello from client\n"))
+	// 5. Server -> Client ACK (Seq = 2001, Ack = 1024)
+	serverAck := buildDirectionalFrame(serverIP, clientIP, &layers.TCP{SrcPort: 514, DstPort: 54321, ACK: true, Seq: 2001, Ack: 1024}, nil)
 
 	frames := []gopacket.Packet{syn, synAck, ack, data, serverAck}
 	ch := make(chan gopacket.Packet, len(frames))
@@ -747,5 +748,147 @@ func BenchmarkOfflineReplay_100kPackets(b *testing.B) {
 		if count != packetCount {
 			b.Fatalf("expected %d packets, read %d", packetCount, count)
 		}
+	}
+}
+
+func TestValidateCaptureOptions(t *testing.T) {
+	tests := []struct {
+		name        string
+		direction   string
+		ports       []int
+		wantDir     string
+		wantPorts   []int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "empty direction and empty ports defaults to dst and 514",
+			direction: "",
+			ports:     nil,
+			wantDir:   "dst",
+			wantPorts: []int{514},
+		},
+		{
+			name:      "valid dst single port",
+			direction: "dst",
+			ports:     []int{514},
+			wantDir:   "dst",
+			wantPorts: []int{514},
+		},
+		{
+			name:      "valid src uppercase",
+			direction: "SRC",
+			ports:     []int{1514},
+			wantDir:   "src",
+			wantPorts: []int{1514},
+		},
+		{
+			name:      "valid both with duplicates and unordered",
+			direction: "both",
+			ports:     []int{2514, 514, 2514, 1514, 514},
+			wantDir:   "both",
+			wantPorts: []int{514, 1514, 2514},
+		},
+		{
+			name:        "invalid direction",
+			direction:   "upstream",
+			ports:       []int{514},
+			wantErr:     true,
+			errContains: "invalid capture direction",
+		},
+		{
+			name:        "port zero invalid",
+			direction:   "dst",
+			ports:       []int{0},
+			wantErr:     true,
+			errContains: "invalid port number",
+		},
+		{
+			name:        "negative port invalid",
+			direction:   "dst",
+			ports:       []int{-514},
+			wantErr:     true,
+			errContains: "invalid port number",
+		},
+		{
+			name:        "port > 65535 invalid",
+			direction:   "dst",
+			ports:       []int{65536},
+			wantErr:     true,
+			errContains: "invalid port number",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, ports, err := ValidateCaptureOptions(tc.direction, tc.ports)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.errContains)
+				}
+				if !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("expected error containing %q, got %v", tc.errContains, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if dir != tc.wantDir {
+				t.Errorf("expected direction %q, got %q", tc.wantDir, dir)
+			}
+			if len(ports) != len(tc.wantPorts) {
+				t.Fatalf("expected ports %v, got %v", tc.wantPorts, ports)
+			}
+			for i := range ports {
+				if ports[i] != tc.wantPorts[i] {
+					t.Errorf("at index %d: expected port %d, got %d", i, tc.wantPorts[i], ports[i])
+				}
+			}
+		})
+	}
+}
+
+func TestNewOfflinePacketSource_Validation(t *testing.T) {
+	// Must fail early before attempting to read non-existent pcap
+	_, err := NewOfflinePacketSource("non_existent_file.pcap", 70000, "dst")
+	if err == nil {
+		t.Fatal("expected error for port 70000, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid port number") {
+		t.Errorf("expected invalid port error, got: %v", err)
+	}
+
+	_, err = NewOfflinePacketSource("non_existent_file.pcap", 514, "invalid_dir")
+	if err == nil {
+		t.Fatal("expected error for invalid direction, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid capture direction") {
+		t.Errorf("expected invalid direction error, got: %v", err)
+	}
+}
+
+func TestNewPcapPacketSource_BufferSizeError(t *testing.T) {
+	// Hook setBufferSize to simulate error
+	origHook := setBufferSizeHook
+	defer func() { setBufferSizeHook = origHook }()
+
+	setBufferSizeHook = func(h *pcap.InactiveHandle, sz int) error {
+		return fmt.Errorf("simulated buffer allocation failure")
+	}
+
+	// Try on loopback/lo interface if available or mock
+	devs, err := pcap.FindAllDevs()
+	if err != nil || len(devs) == 0 {
+		t.Skip("no interface available for buffer size hook test")
+	}
+
+	intf := devs[0].Name
+	_, err = NewPcapPacketSourceMultiPort(intf, []int{514}, "dst", false)
+	if err == nil {
+		t.Fatal("expected error when SetBufferSize fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to set capture buffer size") {
+		t.Errorf("expected 'failed to set capture buffer size' error, got: %v", err)
 	}
 }

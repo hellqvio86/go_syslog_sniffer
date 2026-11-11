@@ -16,6 +16,7 @@ docker rm -f sniffer_periodic_test_go >/dev/null 2>&1 || true
 docker run --rm \
   --name sniffer_periodic_test_go \
   --network host \
+  --security-opt=no-new-privileges:true \
   --cap-drop=ALL \
   --cap-add=NET_RAW \
   syslog_sniffer:latest \

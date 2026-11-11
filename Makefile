@@ -77,18 +77,26 @@ hadolint: ## Lint Dockerfile with hadolint
 format: fmt ## Alias for fmt
 
 lint: tidy-check fmt-check ## Run linter and static analysis
+	go vet ./...
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
 	elif [ -x "$$HOME/go/bin/golangci-lint" ]; then \
 		"$$HOME/go/bin/golangci-lint" run; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/app" -w /app golangci/golangci-lint:v2.15.0 golangci-lint run; \
 	else \
-		go vet ./...; \
+		echo "ERROR: golangci-lint is required for make lint. Install via: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.15.0" >&2; \
+		exit 1; \
 	fi
 
-coverage: ## Generate test coverage report
+COVERAGE_MIN = 80
+
+coverage: ## Generate test coverage report and enforce threshold
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
-	@go tool cover -func=coverage.out | grep total | awk '{print "Total coverage: " $$3}'
+	@total=$$(go tool cover -func=coverage.out | grep total | awk '{print substr($$3, 1, length($$3)-1)}'); \
+	echo "Total coverage: $$total%"; \
+	awk -v cov="$$total" -v min="$(COVERAGE_MIN)" 'BEGIN {if (cov+0 < min+0) {printf "FAIL: coverage %.1f%% is below floor %.1f%%\n", cov, min; exit 1} else {printf "PASS: coverage %.1f%% meets floor %.1f%%\n", cov, min}}'
 
 sbom: ## Generate SBOM in CycloneDX format
 	@echo "Generating SBOM..."

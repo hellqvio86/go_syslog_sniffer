@@ -22,6 +22,7 @@ docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run --rm \
     --name "$CONTAINER_NAME" \
     --network host \
+    --security-opt=no-new-privileges:true \
     --cap-drop=ALL \
     --cap-add=NET_RAW \
     "$IMAGE_NAME" \

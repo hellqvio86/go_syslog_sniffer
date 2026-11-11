@@ -6,13 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcapgo"
 	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
 	"github.com/hellqvio86/go_syslog_sniffer/internal/config"
 	"github.com/hellqvio86/go_syslog_sniffer/internal/stats"
@@ -260,6 +265,113 @@ func TestRunSniffer_RealOfflinePcapReplay(t *testing.T) {
 	}
 	if summary.EndTime != "2026-11-10T12:00:14Z" {
 		t.Errorf("expected end time 2026-11-10T12:00:14Z, got %s", summary.EndTime)
+	}
+}
+
+func TestRunSniffer_RealOfflinePcapReplay_TCPSplitSegments(t *testing.T) {
+	tmpDir := t.TempDir()
+	pcapPath := filepath.Join(tmpDir, "split_tcp.pcap")
+	f, err := os.Create(pcapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := pcapgo.NewWriter(f)
+	if err := w.WriteFileHeader(65535, layers.LinkTypeEthernet); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+
+	srcIP := net.IP{10, 0, 0, 1}
+	dstIP := net.IP{10, 0, 0, 2}
+	eth := &layers.Ethernet{
+		SrcMAC:       net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
+		DstMAC:       net.HardwareAddr{0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb},
+		EthernetType: layers.EthernetTypeIPv4,
+	}
+	ip := &layers.IPv4{
+		Version:  4,
+		IHL:      5,
+		TTL:      64,
+		Protocol: layers.IPProtocolTCP,
+		SrcIP:    srcIP,
+		DstIP:    dstIP,
+	}
+
+	writeTCPPkt := func(seq uint32, payload []byte, syn, psh, ack bool) {
+		tcp := &layers.TCP{
+			SrcPort: 54321,
+			DstPort: 514,
+			Seq:     seq,
+			SYN:     syn,
+			PSH:     psh,
+			ACK:     ack,
+			Window:  65535,
+		}
+		_ = tcp.SetNetworkLayerForChecksum(ip)
+		buf := gopacket.NewSerializeBuffer()
+		opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+		if len(payload) > 0 {
+			_ = gopacket.SerializeLayers(buf, opts, eth, ip, tcp, gopacket.Payload(payload))
+		} else {
+			_ = gopacket.SerializeLayers(buf, opts, eth, ip, tcp)
+		}
+		data := buf.Bytes()
+		ci := gopacket.CaptureInfo{
+			Timestamp:     time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC),
+			CaptureLength: len(data),
+			Length:        len(data),
+		}
+		if err := w.WritePacket(ci, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. SYN
+	writeTCPPkt(1000, nil, true, false, false)
+	// 2. Data Part 1: split across boundary inside hostname!
+	part1 := []byte("<165>1 2026-11-10T12:00:00Z split")
+	writeTCPPkt(1001, part1, false, false, true)
+	// 3. Data Part 2: second half of message with newline
+	part2 := []byte("host app 1 - - Full message\n")
+	writeTCPPkt(1001+uint32(len(part1)), part2, false, true, true)
+	_ = f.Close()
+
+	source, err := capture.NewOfflinePacketSource(pcapPath, 514, "dst")
+	if err != nil {
+		t.Fatalf("failed to open test pcap: %v", err)
+	}
+	defer func() { _ = source.Close() }()
+
+	cfg := &config.Config{
+		PcapFile: pcapPath,
+		Port:     514,
+		Interval: 0,
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = RunSniffer(context.Background(), cfg, source, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("expected nil error replaying split tcp pcap, got: %v", err)
+	}
+
+	var summary stats.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to parse summary: %v\nOutput: %s", err, stdout.String())
+	}
+
+	entry, ok := summary.Hosts["10.0.0.1"]
+	if !ok {
+		t.Fatalf("expected host 10.0.0.1 in summary, got: %+v", summary.Hosts)
+	}
+	if entry.Count != 1 {
+		t.Errorf("expected count 1, got %d", entry.Count)
+	}
+	if len(entry.ClaimedHostnames) == 0 || entry.ClaimedHostnames[0] != "splithost" {
+		t.Errorf("expected claimed hostname 'splithost', got: %v", entry.ClaimedHostnames)
+	}
+	expectedSample := "<165>1 2026-11-10T12:00:00Z splithost app 1 - - Full message"
+	if entry.Sample != expectedSample {
+		t.Errorf("expected sample %q, got %q", expectedSample, entry.Sample)
 	}
 }
 
@@ -1150,4 +1262,74 @@ func BenchmarkPipeline_NextPacketParseAddEntry(b *testing.B) {
 			}
 		}
 	}
+}
+
+func TestRunSniffer_CancellationDuringIdleAndRetryWait_P1_5(t *testing.T) {
+	cfg := &config.Config{
+		Interface: "lo",
+		Port:      514,
+		Interval:  0, // unlimited
+	}
+
+	t.Run("cancels promptly during idle wait", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		mock := testutil.NewMockPacketSource(nil) // returns nil, nil repeatedly
+		var stdout, stderr bytes.Buffer
+
+		done := make(chan error, 1)
+		go func() {
+			done <- RunSniffer(ctx, cfg, mock, &stdout, &stderr)
+		}()
+
+		time.Sleep(15 * time.Millisecond)
+		cancel()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("unexpected error on cancel: %v", err)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("RunSniffer did not return promptly upon cancellation during idle wait")
+		}
+	})
+
+	t.Run("cancels promptly during error backoff wait", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		errSource := &failingMockSource{err: errors.New("temporary read error")}
+		var stdout, stderr bytes.Buffer
+
+		done := make(chan error, 1)
+		go func() {
+			done <- RunSniffer(ctx, cfg, errSource, &stdout, &stderr)
+		}()
+
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("unexpected error on cancel: %v", err)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("RunSniffer did not return promptly upon cancellation during error backoff wait")
+		}
+	})
+}
+
+type failingMockSource struct {
+	err error
+}
+
+func (f *failingMockSource) NextPacket() (*capture.PacketData, error) {
+	return nil, f.err
+}
+
+func (f *failingMockSource) Stats() (*capture.Stats, error) {
+	return &capture.Stats{}, nil
+}
+
+func (f *failingMockSource) Close() error {
+	return nil
 }

@@ -98,14 +98,18 @@ func RunSniffer(
 			if cfg.Debug {
 				debugLog(stderr, "DEBUG: Error reading packet: %v\n", err)
 			}
-			time.Sleep(consecutiveErrorBackoff)
+			if !sleepWithContext(ctx, consecutiveErrorBackoff) {
+				break
+			}
 			continue
 		}
 		consecutiveErrors = 0
 
 		if packet == nil {
-			// No packet received (timeout); yield briefly
-			time.Sleep(10 * time.Millisecond)
+			// No packet received (timeout); yield briefly unless cancelled
+			if !sleepWithContext(ctx, 10*time.Millisecond) {
+				break
+			}
 			continue
 		}
 
@@ -288,4 +292,24 @@ func computeCaptureStatsDelta(curr *capture.Stats, prev *capture.Stats) (*stats.
 		PacketsIfDropped: curr.PacketsIfDropped,
 	}
 	return diff, next
+}
+
+// sleepWithContext pauses execution for duration d or returns promptly if ctx is cancelled.
+// It returns true if the full duration elapsed, or false if ctx was cancelled.
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer func() {
+		if !t.Stop() {
+			select {
+			case <-t.C:
+			default:
+			}
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }

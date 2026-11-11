@@ -25,14 +25,16 @@ type CaptureStats struct {
 
 // HostStats contains the packet count, IP, claimed hostname, sample message, and security flags.
 type HostStats struct {
-	Count                 uint64   `json:"count"`
-	SrcIP                 string   `json:"src_ip"`
-	Hostname              string   `json:"hostname,omitempty"`
-	ClaimedHostnames      []string `json:"claimed_hostnames,omitempty"`
-	ClaimedHostnamesTotal int      `json:"claimed_hostnames_total,omitempty"`
-	Sample                string   `json:"sample,omitempty"`
-	SampleTruncated       bool     `json:"sample_truncated,omitempty"`
-	TLSSuspected          bool     `json:"tls_suspected,omitempty"`
+	Count    uint64 `json:"count"`
+	SrcIP    string `json:"src_ip"`
+	Hostname string `json:"hostname,omitempty"`
+	// ClaimedHostnames is a bounded list of up to 8 unique hostnames claimed by messages from this host (useful for relay detection).
+	ClaimedHostnames []string `json:"claimed_hostnames,omitempty"`
+	// ClaimedHostnamesTotal is the total cumulative count of messages seen from this host that contained a non-empty claimed hostname, including repeated/duplicate occurrences.
+	ClaimedHostnamesTotal int    `json:"claimed_hostnames_total,omitempty"`
+	Sample                string `json:"sample,omitempty"`
+	SampleTruncated       bool   `json:"sample_truncated,omitempty"`
+	TLSSuspected          bool   `json:"tls_suspected,omitempty"`
 }
 
 // JSONSummary represents the serialized JSON report.
@@ -300,10 +302,16 @@ func (st *Tracker) RecordIgnoredDecodeError() {
 }
 
 // SetCaptureStats updates the capture statistics reported in summary output.
+// The input CaptureStats is deep-copied to prevent external mutation.
 func (st *Tracker) SetCaptureStats(cs *CaptureStats) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.captureStats = cs
+	if cs == nil {
+		st.captureStats = nil
+		return
+	}
+	cp := *cs
+	st.captureStats = &cp
 }
 
 // Clear resets all tracked stats and overflow counters.
@@ -317,13 +325,25 @@ func (st *Tracker) Clear() {
 	st.captureStats = nil
 }
 
+func cloneHostStats(v *HostStats) HostStats {
+	if v == nil {
+		return HostStats{}
+	}
+	cp := *v
+	if len(v.ClaimedHostnames) > 0 {
+		cp.ClaimedHostnames = make([]string, len(v.ClaimedHostnames))
+		copy(cp.ClaimedHostnames, v.ClaimedHostnames)
+	}
+	return cp
+}
+
 func (st *Tracker) buildSummaryLocked(intervalSeconds uint64, timestamps []time.Time) JSONSummary {
 	hostsCopy := make(map[string]HostStats, len(st.stats)+len(st.namedStats))
 	for addr, v := range st.stats {
-		hostsCopy[addr.String()] = *v
+		hostsCopy[addr.String()] = cloneHostStats(v)
 	}
 	for k, v := range st.namedStats {
-		hostsCopy[k] = *v
+		hostsCopy[k] = cloneHostStats(v)
 	}
 
 	var csCopy *CaptureStats

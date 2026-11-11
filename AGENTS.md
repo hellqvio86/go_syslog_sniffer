@@ -6,18 +6,19 @@ Guidance and repository conventions for autonomous AI agents and coding assistan
 
 ## 1. Project Overview & Architecture
 
-`go_syslog_sniffer` is a high-performance, low-latency UDP and TCP syslog capture and aggregation tool written in pure safe Go. It captures network datagrams (live via libpcap raw sockets or replay via offline `.pcap` files), parses standard and network-gear syslog formats (RFC 5424, RFC 3164, RFC 6587), maintains bounded-memory aggregate statistics per verified source IP, and outputs structured JSON or NDJSON summaries.
+`go_syslog_sniffer` is a high-performance, low-latency UDP and TCP syslog capture and aggregation tool written in Go using CGO-backed libpcap raw packet capture. It captures network datagrams and streams (live via libpcap raw sockets or replay via offline `.pcap` files), reassembles TCP streams (RFC 6587 octet-counting and LF line delimiters) with `gopacket/tcpassembly`, preserves UDP datagrams (RFC 5426), parses standard and network-gear syslog formats (RFC 5424, RFC 3164), maintains bounded-memory aggregate statistics per observed packet source IP, and outputs structured JSON or NDJSON summaries.
 
 ### Core Modules
 
-- [`main.go`](file:///home/hellqvio/git/go_syslog_sniffer/main.go): Binary entry point, CLI invocation orchestration, force-quit signal handling (`SIGINT`/`SIGTERM`), network interface listing, and exit code management.
-- [`internal/app/app.go`](file:///home/hellqvio/git/go_syslog_sniffer/internal/app/app.go): Application capture loop (`RunSniffer`), periodic window intervals, capture statistics delta calculations, sample suppression/redaction in logs, and JSON/NDJSON emission.
-- [`internal/capture/capture.go`](file:///home/hellqvio/git/go_syslog_sniffer/internal/capture/capture.go): Packet source abstraction (`PacketSource` interface) with live capture (`PcapPacketSource`) and offline pcap replay, BPF filter generation with in-band 802.1Q VLAN support (`(port N) or (vlan and port N)`), link-layer decoding into `PacketData`, and link type validation.
-- [`internal/config/config.go`](file:///home/hellqvio/git/go_syslog_sniffer/internal/config/config.go): CLI argument parsing via `flag.FlagSet`, short and long flag aliases (`-i/-p/-t/-d/-v/-r`), multi-port comma separation, direction parsing, and validation rules.
-- [`internal/stats/stats.go`](file:///home/hellqvio/git/go_syslog_sniffer/internal/stats/stats.go): Thread-safe bounded memory tracker (`Tracker`), atomic snapshot and reset (`SnapshotAndReset`), `netip.Addr` source IP map keying, rune-safe sample truncation, relay visibility (`claimed_hostnames`), and kernel drop delta tracking.
-- [`internal/syslog/parser.go`](file:///home/hellqvio/git/go_syslog_sniffer/internal/syslog/parser.go): Transport-aware framing (`SplitMessages` for RFC 5426 UDP datagram preservation and RFC 6587 TCP octet-counting/LF-framing) and zero-allocation header parsing (RFC 5424 version 1, RFC 3164 with ISO timestamps, Cisco sequence numbers, and NTP markers).
-- [`internal/testutil/`](file:///home/hellqvio/git/go_syslog_sniffer/internal/testutil/): Test harness utilities, in-memory `MockPacketSource`, and programmatic pcap fixture generation.
-- [`testdata/`](file:///home/hellqvio/git/go_syslog_sniffer/testdata/): Standard offline pcap replay fixtures for end-to-end testing (UDP, TCP, VLAN, IPv6).
+- [`main.go`](main.go): Binary entry point, CLI orchestration, signal handling (`SIGINT`/`SIGTERM`), network interface listing, and exit code management via `run() int`.
+- [`internal/app/app.go`](internal/app/app.go): Application capture loop (`RunSniffer`), periodic window intervals, capture statistics delta calculations, sample suppression/redaction in logs, and JSON/NDJSON emission.
+- [`internal/capture/capture.go`](internal/capture/capture.go): Packet source abstraction (`PacketSource` interface) with live capture (`PcapPacketSource`) and offline pcap replay, BPF filter generation with in-band 802.1Q VLAN support (`(port N) or (vlan and port N)`), link-layer decoding into `PacketData`, input validation, and link type validation.
+- [`internal/capture/tcp_reassembler.go`](internal/capture/tcp_reassembler.go): Bounded TCP stream reassembly using `gopacket/tcpassembly` supporting out-of-order segments, split message reassembly across segment boundaries, connection teardown, and flow timeout.
+- [`internal/config/config.go`](internal/config/config.go): CLI argument parsing via `flag.FlagSet`, short and long flag aliases (`-i/-p/-t/-d/-v/-r`), multi-port comma separation, direction parsing, and validation rules.
+- [`internal/stats/stats.go`](internal/stats/stats.go): Thread-safe bounded memory tracker (`Tracker`), atomic snapshot and reset (`SnapshotAndReset`), `netip.Addr` source IP map keying, rune-safe sample truncation, relay visibility (`claimed_hostnames`), deep-copied immutable snapshots, and kernel drop delta tracking.
+- [`internal/syslog/parser.go`](internal/syslog/parser.go): Transport-aware framing (`SplitMessages` with explicit `transport` parameter), bounded message limits (65,535 bytes), and zero-allocation header parsing (RFC 5424 version 1, RFC 3164 with ISO timestamps, Cisco sequence numbers, and NTP markers).
+- [`internal/testutil/`](internal/testutil/): Test harness utilities, in-memory `MockPacketSource`, and programmatic pcap fixture generation.
+- [`testdata/`](testdata/): Standard offline pcap replay fixtures for end-to-end testing (UDP, TCP, VLAN, IPv6).
 
 ---
 
@@ -38,7 +39,7 @@ When modifying this repository, AI agents **MUST** respect the following non-neg
    - Forwarder/relay visibility is bounded to at most 8 unique `claimed_hostnames` per host entry.
 4. **Transport-Aware Framing Integrity**:
    - UDP datagrams represent exactly one message (RFC 5426) and must NEVER be split on newlines.
-   - TCP segments support RFC 6587 octet-counted framing (`<len> <msg>`) and LF line splitting. Truncated or overrunning octet frames must be rejected and attributed to `ignored.not_syslog`.
+   - TCP streams support RFC 6587 octet-counted framing (`<len> <msg>`) and LF line splitting via bounded stream reassembly. Messages split across TCP segments or coalesced into single segments are fully reassembled. Truncated or overrunning octet frames (> 65,535 bytes) are rejected and attributed to `ignored.not_syslog`.
 5. **Process Exit Code Contract**:
    - `0`: Clean completion (duration reached, SIGINT/SIGTERM received, clean offline pcap EOF, `--help`, `--version`, or `--list-interfaces`).
    - `1`: Fatal capture or runtime failure (interface missing, permission denied, invalid configuration arguments, corrupted pcap, or live stream closure).

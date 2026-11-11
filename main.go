@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,67 +16,75 @@ import (
 	"github.com/hellqvio86/go_syslog_sniffer/internal/config"
 )
 
+// packetSourceFactory creates a packet source for the given configuration.
+// It can be replaced in unit tests to verify lifecycle and error handling.
+var packetSourceFactory = func(cfg *config.Config) (capture.PacketSource, error) {
+	if cfg.PcapFile != "" {
+		return capture.NewOfflinePacketSourceMultiPort(cfg.PcapFile, cfg.Ports, cfg.Direction)
+	}
+	return capture.NewPcapPacketSourceMultiPort(cfg.Interface, cfg.Ports, cfg.Direction, cfg.Promiscuous)
+}
+
 func main() {
-	cfg, err := config.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	cfg, err := config.ParseArgs(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			os.Exit(0)
+			return 0
 		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
 	}
 
 	if cfg.ShowVersion {
-		fmt.Printf("syslog_sniffer %s\n", config.Version)
-		os.Exit(0)
+		_, _ = fmt.Fprintf(stdout, "syslog_sniffer %s\n", config.Version)
+		return 0
 	}
 
 	if cfg.ListInterfaces {
 		devs, err := pcap.FindAllDevs()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing interfaces: %v\n", err)
-			os.Exit(1)
+			_, _ = fmt.Fprintf(stderr, "Error listing interfaces: %v\n", err)
+			return 1
 		}
-		fmt.Println("Available network interfaces:")
+		_, _ = fmt.Fprintln(stdout, "Available network interfaces:")
 		for _, dev := range devs {
 			if dev.Description != "" {
-				fmt.Printf("  - %s (%s)\n", dev.Name, dev.Description)
+				_, _ = fmt.Fprintf(stdout, "  - %s (%s)\n", dev.Name, dev.Description)
 			} else {
-				fmt.Printf("  - %s\n", dev.Name)
+				_, _ = fmt.Fprintf(stdout, "  - %s\n", dev.Name)
 			}
 		}
-		os.Exit(0)
+		return 0
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	go func() {
-		<-ctx.Done()
-		cancel()
-	}()
+	// Setup signal handling. Calling stop on exit unregisters signal notifications.
+	// A subsequent signal before shutdown finishes triggers default OS termination.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	var (
-		source capture.PacketSource
-	)
-	if cfg.PcapFile != "" {
-		source, err = capture.NewOfflinePacketSourceMultiPort(cfg.PcapFile, cfg.Ports, cfg.Direction)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to open pcap file: %v\n", err)
-			os.Exit(1)
+	source, err := packetSourceFactory(cfg)
+	if err != nil {
+		if cfg.PcapFile != "" {
+			_, _ = fmt.Fprintf(stderr, "Error: Failed to open pcap file: %v\n", err)
+		} else {
+			_, _ = fmt.Fprintf(stderr, "Error: Failed to setup capture: %v\n", err)
 		}
-	} else {
-		source, err = capture.NewPcapPacketSourceMultiPort(cfg.Interface, cfg.Ports, cfg.Direction, cfg.Promiscuous)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to setup capture: %v\n", err)
-			os.Exit(1)
-		}
+		return 1
 	}
 	defer func() {
-		_ = source.Close()
+		if closeErr := source.Close(); closeErr != nil {
+			_, _ = fmt.Fprintf(stderr, "Warning: failed to close packet source: %v\n", closeErr)
+		}
 	}()
 
-	if err := app.RunSniffer(ctx, cfg, source, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if err := app.RunSniffer(ctx, cfg, source, stdout, stderr); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
 	}
+
+	return 0
 }

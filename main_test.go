@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hellqvio86/go_syslog_sniffer/internal/capture"
 	"github.com/hellqvio86/go_syslog_sniffer/internal/config"
 )
 
@@ -170,4 +173,107 @@ func TestCLI_IPv6PcapFile(t *testing.T) {
 	if !strings.Contains(stdout, "2001:db8::1") {
 		t.Errorf("expected host 2001:db8::1 in output, got: %s", stdout)
 	}
+}
+
+// recordingSource records whether Close was executed.
+type recordingSource struct {
+	closed        bool
+	nextErr       error
+	statsErr      error
+	closeErr      error
+	returnPackets []*capture.PacketData
+}
+
+func (r *recordingSource) NextPacket() (*capture.PacketData, error) {
+	if r.nextErr != nil {
+		return nil, r.nextErr
+	}
+	if len(r.returnPackets) > 0 {
+		p := r.returnPackets[0]
+		r.returnPackets = r.returnPackets[1:]
+		return p, nil
+	}
+	return nil, io.EOF
+}
+
+func (r *recordingSource) Stats() (*capture.Stats, error) {
+	if r.statsErr != nil {
+		return nil, r.statsErr
+	}
+	return &capture.Stats{}, nil
+}
+
+func (r *recordingSource) Close() error {
+	r.closed = true
+	return r.closeErr
+}
+
+func TestRun_LifecycleAndCleanup(t *testing.T) {
+	origFactory := packetSourceFactory
+	defer func() { packetSourceFactory = origFactory }()
+
+	t.Run("successful run closes packet source and returns 0", func(t *testing.T) {
+		rec := &recordingSource{}
+		packetSourceFactory = func(cfg *config.Config) (capture.PacketSource, error) {
+			return rec, nil
+		}
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"-i", "lo", "-t", "1"}, &stdout, &stderr)
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d (stderr: %s)", code, stderr.String())
+		}
+		if !rec.closed {
+			t.Errorf("expected Close to have been called on source")
+		}
+	})
+
+	t.Run("runtime error closes packet source and returns 1", func(t *testing.T) {
+		rec := &recordingSource{
+			nextErr: capture.ErrCaptureClosed, // triggers RunSniffer fatal error
+		}
+		packetSourceFactory = func(cfg *config.Config) (capture.PacketSource, error) {
+			return rec, nil
+		}
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"-i", "lo", "-t", "1"}, &stdout, &stderr)
+		if code != 1 {
+			t.Errorf("expected exit code 1, got %d", code)
+		}
+		if !rec.closed {
+			t.Errorf("expected Close to have been called even on fatal runtime error")
+		}
+		if !strings.Contains(stderr.String(), "Error: capture stream closed") {
+			t.Errorf("expected error message on stderr, got: %q", stderr.String())
+		}
+	})
+
+	t.Run("invalid arguments returns 1 without opening packet source", func(t *testing.T) {
+		called := false
+		packetSourceFactory = func(cfg *config.Config) (capture.PacketSource, error) {
+			called = true
+			return &recordingSource{}, nil
+		}
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"--invalid-flag-123"}, &stdout, &stderr)
+		if code != 1 {
+			t.Errorf("expected exit code 1, got %d", code)
+		}
+		if called {
+			t.Errorf("packet source should not be created for invalid CLI arguments")
+		}
+	})
+
+	t.Run("source creation failure returns 1", func(t *testing.T) {
+		packetSourceFactory = func(cfg *config.Config) (capture.PacketSource, error) {
+			return nil, errors.New("simulated setup failure")
+		}
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"-i", "lo"}, &stdout, &stderr)
+		if code != 1 {
+			t.Errorf("expected exit code 1, got %d", code)
+		}
+		if !strings.Contains(stderr.String(), "Error: Failed to setup capture") {
+			t.Errorf("expected error message on stderr, got: %q", stderr.String())
+		}
+	})
 }
