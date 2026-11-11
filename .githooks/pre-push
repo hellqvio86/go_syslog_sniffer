@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
+
+if [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]]; then
+    export PATH="${HOME}/.local/bin:${PATH}"
+fi
+if [[ -d "${HOME}/go/bin" && ":${PATH}:" != *":${HOME}/go/bin:"* ]]; then
+    export PATH="${HOME}/go/bin:${PATH}"
+fi
+
+echo "=========================================="
+echo "Running pre-push checks..."
+echo "=========================================="
+
+echo "--> [1/9] Verifying module dependencies..."
+make tidy-check
+
+echo "--> [2/9] Checking code formatting..."
+make fmt-check
+
+echo "--> [3/9] Running linter and static analysis..."
+make lint
+
+echo "--> [4/9] Running govulncheck..."
+make vulncheck
+
+echo "--> [5/9] Linting Dockerfile..."
+make hadolint
+
+echo "--> [6/9] Running unit tests with race detector..."
+make test
+
+echo "--> [7/9] Generating test coverage report..."
+make coverage
+
+echo "--> [8/9] Running full TruffleHog secret scan..."
+make secrets
+
+echo "--> [9/9] Running Trivy vulnerability scan..."
+make trivy
+
+echo "=========================================="
+echo "All pre-push checks passed!"
+echo "=========================================="

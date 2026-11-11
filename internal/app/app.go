@@ -277,13 +277,15 @@ func computeCaptureStatsDelta(curr *capture.Stats, prev *capture.Stats) (*stats.
 		}
 	}
 
-	return &stats.CaptureStats{
+	diff := &stats.CaptureStats{
 		PacketsReceived:  received,
 		PacketsDropped:   dropped,
 		PacketsIfDropped: ifDropped,
-	}, &capture.Stats{
+	}
+	next := &capture.Stats{
 		PacketsReceived:  curr.PacketsReceived,
 		PacketsDropped:   curr.PacketsDropped,
 		PacketsIfDropped: curr.PacketsIfDropped,
 	}
+	return diff, next
 }

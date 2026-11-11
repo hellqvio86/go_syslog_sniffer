@@ -63,8 +63,17 @@ make fmt
 
 ### Static Analysis & Security Scanning
 ```bash
-# Run all code quality checks (golangci-lint and go vet)
+# Verify module dependencies (go mod tidy)
+make tidy-check
+
+# Run all code quality checks (tidy-check, fmt-check, golangci-lint, and go vet)
 make lint
+
+# Run govulncheck vulnerability analysis
+make vulncheck
+
+# Lint Dockerfile
+make hadolint
 
 # Run TruffleHog secrets scanner on git tree
 make secrets
@@ -115,11 +124,14 @@ All commits must follow the [Conventional Commits](https://www.conventionalcommi
 - `test(...)`: New unit tests, fixtures, or benchmarks
 - `docs(...)`: Documentation updates
 
-### Pre-commit Hooks
-The repository includes `.githooks/pre-commit`, running:
-1. `make fmt-check` & `make lint`
-2. `go test -v -race ./...`
-3. TruffleHog secrets scan (`make secrets`)
-4. Trivy vulnerability scan (`make trivy`)
+### Pre-commit & Pre-push Hooks
+The repository includes `.githooks/pre-commit` and `.githooks/pre-push`, running:
+1. `make tidy-check` & `make fmt-check` & `make lint`
+2. `make vulncheck`
+3. `make hadolint`
+4. `make test` (`go test -v -race ./...`)
+5. `make coverage` (on pre-push)
+6. TruffleHog secrets scan (`make secrets`)
+7. Trivy vulnerability scan (`make trivy`)
 
-Ensure all checks succeed cleanly prior to committing.
+Ensure all checks succeed cleanly prior to committing and pushing.

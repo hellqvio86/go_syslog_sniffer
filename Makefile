@@ -1,4 +1,4 @@
-.PHONY: help build run clean test fmt fmt-check format lint coverage sbom docker-build docker-run docker-run-interactive docker-tag docker-push docker-clean all renovate renovate-summary hooks secrets trivy
+.PHONY: help build run clean test fmt fmt-check tidy-check vulncheck hadolint format lint coverage sbom docker-build docker-run docker-run-interactive docker-tag docker-push docker-clean all renovate renovate-summary hooks secrets trivy
 
 # Variables
 BINARY_NAME = syslog_sniffer
@@ -40,10 +40,43 @@ fmt: ## Format Go source files
 
 fmt-check: ## Check Go code formatting
 	@diff=$$(gofmt -l .); if [ -n "$$diff" ]; then echo "Unformatted files found: $$diff"; exit 1; fi
+	@if command -v docker >/dev/null 2>&1 && [ -n "$(GO_MOD_VERSION)" ]; then \
+		docker_diff=$$(docker run --rm -v "$$(pwd):/src" -w /src "golang:$(GO_MOD_VERSION)" gofmt -l .); \
+		if [ -n "$$docker_diff" ]; then \
+			echo "Unformatted files found (Go $(GO_MOD_VERSION)): $$docker_diff"; \
+			exit 1; \
+		fi; \
+	fi
+
+tidy-check: ## Check that go.mod and go.sum are tidy
+	go mod tidy
+	git diff --exit-code go.mod go.sum
+
+vulncheck: ## Run govulncheck vulnerability analysis
+	@echo "Running govulncheck..."
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck ./...; \
+	elif [ -x "$$HOME/go/bin/govulncheck" ]; then \
+		"$$HOME/go/bin/govulncheck" ./...; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/src" -w /src "golang:$(GO_MOD_VERSION)" sh -c "go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 && govulncheck ./..."; \
+	else \
+		echo "ERROR: govulncheck or docker is required!" >&2 && exit 1; \
+	fi
+
+hadolint: ## Lint Dockerfile with hadolint
+	@echo "Running hadolint..."
+	@if command -v hadolint >/dev/null 2>&1; then \
+		hadolint Dockerfile --ignore DL3008; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/work" -w /work ghcr.io/hadolint/hadolint:latest hadolint Dockerfile --ignore DL3008; \
+	else \
+		echo "ERROR: hadolint or docker is required!" >&2 && exit 1; \
+	fi
 
 format: fmt ## Alias for fmt
 
-lint: fmt-check ## Run linter and static analysis
+lint: tidy-check fmt-check ## Run linter and static analysis
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
 	elif [ -x "$$HOME/go/bin/golangci-lint" ]; then \
@@ -117,10 +150,11 @@ renovate: ## Run Renovate locally in dry-run mode
 renovate-summary: ## Show summary of Renovate updates
 	@./bin/renovate/run.sh --summary
 
-hooks: ## Install git pre-commit hook
+hooks: ## Install git pre-commit and pre-push hooks
 	@chmod +x .githooks/pre-commit 2>/dev/null || true
+	@chmod +x .githooks/pre-push 2>/dev/null || true
 	@git config core.hooksPath .githooks
-	@echo "Git pre-commit hook installed and core.hooksPath set to .githooks."
+	@echo "Git hooks installed and core.hooksPath set to .githooks."
 
 secrets: ## Run TruffleHog secret scanning
 	@echo "Running TruffleHog secret scan..."
